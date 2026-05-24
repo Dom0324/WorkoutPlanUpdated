@@ -441,6 +441,7 @@ let S={history:[],diet:[],skillLogs:{},skills:[],bodyWeight:[],steps:[],sleep:[]
 let WS={};
 let CUR_DAY=null;
 let SEL_LIFT=null;
+let SEL_METRIC='max'; // 'max' | 'best' | 'vol'
 
 function load(){
   try{const r=localStorage.getItem('lift_v5');if(r){const d=JSON.parse(r);S={...S,...d};}const p=localStorage.getItem('lift_prog_v5');PROG=p?JSON.parse(p):JSON.parse(JSON.stringify(DEFAULT_PROG));if(!S.skills||!S.skills.length)S.skills=JSON.parse(JSON.stringify(DEFAULT_SKILLS));}
@@ -471,6 +472,13 @@ function wkKey(ds){const d=ds?new Date(ds):new Date();const dy=d.getDay();const 
 function isThisWk(ds){return wkKey(ds)===wkKey();}
 function isLastWk(ds){const lw=new Date();lw.setDate(lw.getDate()-7);return wkKey(ds)===wkKey(lw.toLocaleDateString('en-US'));}
 function fmtDate(ds){if(!ds)return '—';const d=new Date(ds);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',weekday:'short'});}
+function toInputDate(ds){
+  // Convert "5/23/2026" → "2026-05-23" for <input type="date">
+  if(!ds)return '';
+  const d=new Date(ds);
+  if(isNaN(d))return '';
+  return d.toISOString().split('T')[0];
+}
 function getLastSession(exId){for(let i=S.history.length-1;i>=0;i--){const ex=S.history[i].exercises?.find(e=>e.id===exId);if(ex)return ex;}return null;}
 function fmtSets(sets){if(!sets?.length)return '—';return sets.filter(s=>s.weight||s.reps).slice(0,3).map(s=>`${s.weight||'?'}×${s.reps||'?'}`).join('  ');}
 
@@ -594,13 +602,13 @@ function buildWorkout(day){
         <div class="exRpe">${ex.rpe} · Rest: ${ex.rest}</div>
         <div class="exMuscle">${ex.muscle}</div>
         ${ovldHTML}
-        ${last?`<div class="exLast">Last: ${fmtSets(last.sets)}</div>`:''}
+        ${last?`<div class="exLast">Last: ${fmtSets(last.sets)}${last.brand?` · <span style="color:var(--teal)">${last.brand}</span>`:''}</div>`:''}
         ${histCount?`<button class="exHistBtn" id="histBtn-${ex.id}" onclick="togHistDrawer('${ex.id}')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
           View history
         </button>
         <div class="exHistDrawer" id="histDrawer-${ex.id}"></div>`:''}
-        <div class="setsWrap" id="sw-${ex.id}">
+        <div style="margin-top:7px"><input style="width:100%;font-size:11px;padding:5px 9px;border-radius:20px;background:var(--td);color:var(--teal);border:1px solid var(--teal);outline:none" placeholder="Equipment brand (optional, e.g. Hammer Strength)" value="${WS[ex.id]?.brand||last?.brand||''}" onchange="setBrand('${ex.id}',this.value)"></div>        <div class="setsWrap" id="sw-${ex.id}">
           ${d.sets.map((s,si)=>setRowHTML(ex.id,si,s)).join('')}
           <button class="addSet" onclick="addSet('${ex.id}')">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add set
@@ -643,8 +651,9 @@ function togHistDrawer(exId){
     const trend=prev?max>prev?`<span style="color:var(--green)">↑ +${Math.round((max-prev)*10)/10}</span>`:max<prev?`<span style="color:var(--red)">↓ ${Math.round((max-prev)*10)/10}</span>`:`<span style="color:var(--t3)">— same</span>`:'';
     const d=new Date(h.date);const dateStr=(d.getMonth()+1)+'/'+d.getDate();
     const rpeStr=h.rpe?`<div style="font-size:9px;color:var(--amber);margin-top:2px">RPE ${h.rpe}</div>`:'';
+    const brandStr=h.brand?`<div style="font-size:9px;color:var(--teal);margin-top:2px">${h.brand}</div>`:'';
     rows+=`<div class="ehdRow${i===0?' current':''}">
-      <div><div class="ehdDate">${dateStr}</div>${rpeStr}</div>
+      <div><div class="ehdDate">${dateStr}</div>${rpeStr}${brandStr}</div>
       <div class="ehdSets">${setStr}</div>
       <div><div class="ehdMax ${max>0?(i===0?'g':''):''}">  ${max>0?max+'lbs':'—'}</div><div class="ehdTrend">${trend}</div></div>
     </div>`;
@@ -658,7 +667,7 @@ function finishWorkout(){
   const steps=document.getElementById('steps-w')?.value;
   if(steps){S.steps=S.steps.filter(s=>s.date!==today());S.steps.unshift({date:today(),steps:parseInt(steps)||0});}
   const exercises=[];
-  day.blocks.forEach(b=>b.exercises.forEach(ex=>{const d=WS[ex.id];if(d.sets.filter(s=>s.weight||s.reps).length)exercises.push({id:ex.id,name:ex.name,sets:d.sets,rpe:d.rpe,note:d.note});}));
+  day.blocks.forEach(b=>b.exercises.forEach(ex=>{const d=WS[ex.id];if(d.sets.filter(s=>s.weight||s.reps).length)exercises.push({id:ex.id,name:ex.name,sets:d.sets,rpe:d.rpe,note:d.note,brand:d.brand||''});}));
   const mi=document.getElementById('c-mi')?.value;const pace=document.getElementById('c-pace')?.value;
   S.history.unshift({id:Date.now(),date:today(),dayId:day.id,name:day.title,dur:day.dur,exercises,cardio:mi?{miles:mi,pace}:null,week:wkKey()});
   save();toast('Workout saved 💪');setTimeout(()=>{navBack();renderHome();},500);
@@ -785,6 +794,12 @@ function renderDiet(){
         <div class="wcCell"><div class="wcLbl">Avg Calories</div><div class="wcVal" style="color:var(--green)">${avgCal||'—'}</div><div style="font-size:10px;color:var(--t3)">Target: ${TARGETS.calories}</div></div>
         <div class="wcCell"><div class="wcLbl">Avg Protein</div><div class="wcVal" style="color:var(--blue)">${avgProt||'—'}g</div><div style="font-size:10px;color:var(--t3)">Target: ${TARGETS.protein}g</div></div>
       </div>
+    </div>
+    <div class="lbl">Edit a Past Day</div>
+    <div class="card" style="padding:14px">
+      <div style="font-size:13px;color:var(--t2);margin-bottom:10px">Forgot to log something? Go back and fill it in.</div>
+      <input class="fInp" id="editDayPicker" type="date" style="margin-bottom:10px" value="${new Date().toISOString().split('T')[0]}">
+      <button onclick="openEditDay(new Date(document.getElementById('editDayPicker').value).toLocaleDateString('en-US'))" style="width:100%;padding:10px;border-radius:var(--rsm);background:var(--bd);border:1px solid var(--blue);font-size:13px;font-weight:700;color:var(--blue)">Open This Day</button>
     </div>`;
 
   if(S.bodyWeight.length>=2)setTimeout(()=>{const d=S.bodyWeight.slice(0,10).reverse();drawLine(document.getElementById('bw-mini'),d.map(x=>x.weight),d.map(x=>{const dd=new Date(x.date);return(dd.getMonth()+1)+'/'+dd.getDate();}),'var(--teal)',70);},50);
@@ -952,8 +967,17 @@ function renderProgress(){
     ${S.bodyWeight.length>=2?`<div class="lbl">Body Weight Trend</div><div class="chartTile"><div class="ctTitle">Weight <span style="font-size:11px;color:var(--t3)">${S.bodyWeight.length>=1?'Latest: '+S.bodyWeight[0].weight+'lbs':''}</span></div><canvas id="pg-bw" height="120"></canvas></div>`:''}
     ${S.steps.length>=2?`<div class="lbl">Daily Steps</div><div class="chartTile"><canvas id="pg-steps" height="100"></canvas></div>`:''}
     <div class="lbl">Strength Progress</div>
-    <div class="scrollRow" id="liftChips" style="margin-bottom:10px"></div>
-    <div class="chartTile"><canvas id="liftChart" height="160"></canvas></div>
+    <div class="scrollRow" id="liftChips" style="margin-bottom:8px"></div>
+    <div style="display:flex;gap:5px;margin-bottom:10px" id="metricToggle">
+      <button class="chip on" id="mt-max" onclick="setMetric('max')">Max Weight</button>
+      <button class="chip" id="mt-best" onclick="setMetric('best')">Best Set</button>
+      <button class="chip" id="mt-vol" onclick="setMetric('vol')">Total Volume</button>
+    </div>
+    <div class="chartTile">
+      <div id="liftChartMeta" style="font-size:11px;color:var(--t3);margin-bottom:8px"></div>
+      <canvas id="liftChart" height="170"></canvas>
+      <div id="liftSummary" style="margin-top:10px"></div>
+    </div>
     <div class="lbl">Skill Tracker</div>
     <div id="skillsWrap"></div>`;
   renderLiftChips();renderSkills();
@@ -965,10 +989,116 @@ function wcStat(lbl,cur,prev,unit){const diff=cur-prev;const up=diff>0;return `<
 
 function calcStreak(){if(!S.history.length)return 0;const dates=[...new Set(S.history.map(h=>h.date))].sort((a,b)=>new Date(b)-new Date(a));let streak=0;let cur=new Date();cur.setHours(0,0,0,0);for(const d of dates){const dd=new Date(d);dd.setHours(0,0,0,0);if(Math.round((cur-dd)/86400000)>1)break;streak++;cur=dd;}return streak;}
 
-function getTrackedLifts(){const seen=new Set(),out=[];S.history.forEach(h=>h.exercises?.forEach(e=>{if(!seen.has(e.id)){seen.add(e.id);out.push({id:e.id,name:e.name});}}));return out.slice(0,12);}
-function renderLiftChips(){const lifts=getTrackedLifts();const wrap=document.getElementById('liftChips');if(!wrap)return;if(!lifts.length){wrap.innerHTML='<span style="font-size:12px;color:var(--t3)">Log workouts to see lift progress.</span>';return;}if(!SEL_LIFT&&lifts.length)SEL_LIFT=lifts[0].id;wrap.innerHTML=lifts.map(l=>`<button class="chip ${SEL_LIFT===l.id?'on':''}" onclick="selLift('${l.id}')">${l.name.split(' ').slice(0,3).join(' ')}</button>`).join('');if(SEL_LIFT)drawLiftChart(SEL_LIFT);}
+function getTrackedLifts(){
+  const seen=new Set(),out=[];
+  S.history.forEach(h=>h.exercises?.forEach(e=>{
+    if(!seen.has(e.id)){seen.add(e.id);out.push({id:e.id,name:e.name});}
+  }));
+  return out.slice(0,16);
+}
+
+function renderLiftChips(){
+  const lifts=getTrackedLifts();
+  const wrap=document.getElementById('liftChips');if(!wrap)return;
+  if(!lifts.length){wrap.innerHTML='<span style="font-size:12px;color:var(--t3)">Log workouts to see lift progress.</span>';return;}
+  if(!SEL_LIFT&&lifts.length)SEL_LIFT=lifts[0].id;
+  wrap.innerHTML=lifts.map(l=>`<button class="chip ${SEL_LIFT===l.id?'on':''}" onclick="selLift('${l.id}')">${l.name.split(' ').slice(0,3).join(' ')}</button>`).join('');
+  if(SEL_LIFT)drawLiftChart(SEL_LIFT);
+}
+
 function selLift(id){SEL_LIFT=id;renderLiftChips();}
-function drawLiftChart(lid){const canvas=document.getElementById('liftChart');if(!canvas)return;const data=[];S.history.slice().reverse().forEach(h=>{const ex=h.exercises?.find(e=>e.id===lid);if(ex){const ws=ex.sets.map(s=>parseFloat(s.weight)||0).filter(w=>w>0);if(ws.length){const dd=new Date(h.date);data.push({date:(dd.getMonth()+1)+'/'+dd.getDate(),val:Math.max(...ws)});}}});drawLine(canvas,data.map(d=>d.val),data.map(d=>d.date),'var(--green)',160);}
+
+function setMetric(m){
+  SEL_METRIC=m;
+  ['max','best','vol'].forEach(k=>{
+    const el=document.getElementById('mt-'+k);
+    if(el)el.classList.toggle('on',k===m);
+  });
+  if(SEL_LIFT)drawLiftChart(SEL_LIFT);
+}
+
+// Compute per-session metrics for one exercise
+function calcExMetrics(exSessions){
+  return exSessions.map(s=>{
+    const sets=s.sets.filter(x=>(parseFloat(x.weight)||0)>0||(parseInt(x.reps)||0)>0);
+    const wSets=sets.map(x=>({w:parseFloat(x.weight)||0,r:parseInt(x.reps)||0}));
+    const maxW=Math.max(0,...wSets.map(x=>x.w));
+    const bestSetVol=Math.max(0,...wSets.map(x=>x.w*x.r));
+    const bestSet=wSets.reduce((best,x)=>x.w*x.r>best.w*best.r?x:best,{w:0,r:0});
+    const totalVol=wSets.reduce((t,x)=>t+x.w*x.r,0);
+    return {date:s.date,maxW,bestSet,bestSetVol,totalVol,sets:wSets,brand:s.brand||''};
+  });
+}
+
+function drawLiftChart(lid){
+  const canvas=document.getElementById('liftChart');if(!canvas)return;
+
+  // Collect sessions for this lift, newest first → reverse for chart
+  const raw=[];
+  S.history.slice().reverse().forEach(h=>{
+    const ex=h.exercises?.find(e=>e.id===lid);
+    if(ex&&ex.sets?.some(s=>s.weight||s.reps)){
+      raw.push({date:h.date,sets:ex.sets,brand:ex.brand||''});
+    }
+  });
+
+  const metrics=calcExMetrics(raw);
+
+  // Metric selector
+  const yFn={
+    max:m=>m.maxW,
+    best:m=>m.bestSetVol,
+    vol:m=>m.totalVol
+  }[SEL_METRIC];
+
+  const labels={
+    max:'Max weight (lbs)',
+    best:'Best set volume (lbs × reps)',
+    vol:'Total session volume (lbs × reps)'
+  }[SEL_METRIC];
+
+  const vals=metrics.map(yFn);
+  const dates=metrics.map(m=>{const d=new Date(m.date);return(d.getMonth()+1)+'/'+d.getDate();});
+
+  // Update meta text
+  const meta=document.getElementById('liftChartMeta');
+  if(meta)meta.textContent=labels+(metrics.length?` · ${metrics.length} sessions logged`:'');
+
+  // Update summary block
+  const summary=document.getElementById('liftSummary');
+  if(summary&&metrics.length){
+    const latest=metrics[metrics.length-1];
+    const prev=metrics.length>=2?metrics[metrics.length-2]:null;
+    const allTime=metrics.reduce((best,m)=>yFn(m)>yFn(best)?m:best,metrics[0]);
+
+    const diffStr=prev?(()=>{
+      const d=yFn(latest)-yFn(prev);
+      const col=d>0?'var(--green)':d<0?'var(--red)':'var(--t3)';
+      const sym=d>0?'↑':d<0?'↓':'→';
+      return `<span style="color:${col};font-weight:700">${sym} ${Math.abs(Math.round(d))} vs last session</span>`;
+    })():'';
+
+    const brandNote=latest.brand?`<div style="font-size:11px;color:var(--teal);margin-top:3px">Last logged on: ${latest.brand}</div>`:'';
+
+    const metricDetail={
+      max:`<div><span style="font-family:var(--fm);font-size:22px;font-weight:600;color:var(--green)">${latest.maxW}lbs</span> max this session · All-time: <span style="color:var(--amber);font-weight:600">${allTime.maxW}lbs</span></div>`,
+      best:`<div><span style="font-family:var(--fm);font-size:22px;font-weight:600;color:var(--green)">${latest.bestSet.w}lbs × ${latest.bestSet.r} reps</span> best set · Vol: ${latest.bestSetVol}<br>All-time best set vol: <span style="color:var(--amber);font-weight:600">${allTime.bestSetVol}</span></div>`,
+      vol:`<div><span style="font-family:var(--fm);font-size:22px;font-weight:600;color:var(--green)">${latest.totalVol}</span> total vol · All-time: <span style="color:var(--amber);font-weight:600">${allTime.totalVol}</span></div>`
+    }[SEL_METRIC];
+
+    // Latest session breakdown
+    const setsBreakdown=latest.sets.filter(s=>s.w||s.r).map(s=>`${s.w}×${s.r} <span style="color:var(--t3);font-size:10px">(${s.w*s.r})</span>`).join('  ');
+
+    summary.innerHTML=`<div style="border-top:1px solid var(--bdr);padding-top:10px">
+      ${metricDetail}
+      <div style="font-size:11px;color:var(--t2);margin-top:6px;font-family:var(--fm)">${setsBreakdown}</div>
+      <div style="font-size:11px;margin-top:4px">${diffStr}</div>
+      ${brandNote}
+    </div>`;
+  } else if(summary){summary.innerHTML='';}
+
+  drawLine(canvas,vals,dates,'var(--green)',170);
+}
 
 // ═══════════════════════ CHARTS ═══════════════════════
 function drawLine(canvas,vals,labels,color,H){
@@ -1011,28 +1141,318 @@ function advMs(id,idx){const sk=S.skills.find(s=>s.id===id);sk.done=Math.max(sk.
 function openSkillLog(id){const sk=S.skills.find(s=>s.id===id);const logs=S.skillLogs[id]||[];document.getElementById('sheetBody').innerHTML=`<div class="shTitle">${sk.icon} ${sk.name}</div><div class="shSub">Log today's best effort</div><div class="field"><div class="fLbl">Current best</div><input class="fInp" id="sk-val" placeholder="${logs[0]?.value||sk.current}"></div><div class="field"><div class="fLbl">Notes</div><input class="fInp" id="sk-note" placeholder="What went well, what to improve..."></div><div class="lbl" style="margin-top:12px">Tap to advance milestone</div><div class="milestones" style="margin-bottom:16px">${sk.milestones.map((m,i)=>`<span class="ms ${i<sk.done?'done':i===sk.done?'next':'fut'}" onclick="advMs('${id}',${i})" style="cursor:pointer">${m}</span>`).join('')}</div><button class="saveBtn" onclick="saveSkillLog('${id}')">SAVE</button>`;openOverlay();}
 function saveSkillLog(id){const val=document.getElementById('sk-val').value;const note=document.getElementById('sk-note').value;if(!S.skillLogs[id])S.skillLogs[id]=[];S.skillLogs[id].unshift({date:today(),value:val||'Logged',note});save();closeOverlay();toast('Skill logged!');setTimeout(renderSkills,100);}
 
-// ═══════════════════════ HISTORY ═══════════════════════
+// ═══════════════════════ HISTORY + EDIT PAST ENTRY ═══════════════════════
 function renderHistory(){
   const c=document.getElementById('historyContent');
-  if(!S.history.length){c.innerHTML=`<div class="empty"><div class="emIco">📋</div><div class="emT">No sessions yet</div><div class="emS">Complete your first workout to see it here.</div></div>`;return;}
+  // Backup/restore bar at top
+  const backupBar=`<div style="display:flex;gap:8px;margin-bottom:4px">
+    <button onclick="exportBackup()" style="flex:1;padding:10px;border-radius:var(--rsm);background:var(--gd);border:1px solid var(--green);font-size:12px;font-weight:700;color:var(--green)">⬇ Export Backup</button>
+    <button onclick="document.getElementById('importFile').click()" style="flex:1;padding:10px;border-radius:var(--rsm);background:var(--bd);border:1px solid var(--blue);font-size:12px;font-weight:700;color:var(--blue)">⬆ Import Backup</button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(event)">
+  </div>
+  <div style="font-size:11px;color:var(--t3);margin-bottom:16px;line-height:1.5">Export saves everything — workouts, diet, sleep, weight, caffeine, skills. Import merges new data on top of existing (won't delete anything).</div>`;
+
+  if(!S.history.length){c.innerHTML=backupBar+`<div class="empty"><div class="emIco">📋</div><div class="emT">No sessions yet</div><div class="emS">Complete your first workout to see it here.</div></div>`;return;}
   const cols={sat:'var(--green)',sun:'var(--blue)',mon:'var(--amber)',tue:'var(--purple)',wed:'var(--blue)',thu:'var(--amber)',fri:'var(--t3)'};
   const weeks={};S.history.forEach(h=>{const wk=h.week||wkKey(h.date);if(!weeks[wk])weeks[wk]=[];weeks[wk].push(h);});
   const sorted=Object.keys(weeks).sort((a,b)=>new Date(b)-new Date(a));
-  c.innerHTML=sorted.map(wk=>{
+  c.innerHTML=backupBar+sorted.map(wk=>{
     const sess=weeks[wk];const isTW=wk===wkKey();
     const totSets=sess.reduce((t,h)=>t+(h.exercises?.reduce((a,e)=>a+(e.sets?.filter(s=>s.weight||s.reps).length||0),0)||0),0);
     return `<div class="lbl">${isTW?'This Week':fmtDate(wk)+' week'} · ${sess.length} sessions · ${totSets} sets</div>
     ${sess.map((h,idx)=>{
-      const col=cols[h.dayId]||'var(--green)';const sets=h.exercises?.reduce((t,e)=>t+(e.sets?.filter(s=>s.weight||s.reps).length||0),0)||0;const key=wk+'_'+idx;
-      return `<div class="histItem"><div class="histHdr" onclick="togHist('${key}')"><div class="histDot" style="background:${col}"></div><div class="histInfo"><div class="histTitle">${h.name.replace(/—.*/,'').trim()}</div><div class="histDate">${fmtDate(h.date)} · ${h.dur||'—'}</div></div><div class="histBadge">${sets} sets</div></div>
-        <div class="histDetail" id="hd-${key}">${h.exercises?.map(ex=>{const sb=ex.sets.filter(s=>s.weight||s.reps).map(s=>`${s.weight||'—'}×${s.reps||'—'}`).join(' · ');const rpe=ex.rpe?` · RPE ${ex.rpe}`:'';return `<div class="hEx"><div class="hExName">${ex.name}${rpe}</div><div class="hExSets">${sb}</div></div>`;}).join('')||''}${h.cardio?`<div style="padding:6px 0;font-size:12px;color:var(--purple)">🏃 ${h.cardio.miles} mi${h.cardio.pace?' @ '+h.cardio.pace+'/mi':''}</div>`:''}
+      const col=cols[h.dayId]||'var(--green)';
+      const sets=h.exercises?.reduce((t,e)=>t+(e.sets?.filter(s=>s.weight||s.reps).length||0),0)||0;
+      const key=wk+'_'+idx;
+      return `<div class="histItem">
+        <div class="histHdr" onclick="togHist('${key}')">
+          <div class="histDot" style="background:${col}"></div>
+          <div class="histInfo">
+            <div class="histTitle">${h.name.replace(/—.*/,'').trim()}</div>
+            <div class="histDate">${fmtDate(h.date)} · ${h.dur||'—'}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="histBadge">${sets} sets</div>
+            <button onclick="event.stopPropagation();openEditSession(${h.id})" style="font-size:11px;font-weight:700;color:var(--blue);padding:3px 8px;border-radius:20px;background:var(--bd)">Edit</button>
+          </div>
+        </div>
+        <div class="histDetail" id="hd-${key}">
+          ${h.exercises?.map(ex=>{
+            const sb=ex.sets.filter(s=>s.weight||s.reps).map(s=>`${s.weight||'—'}×${s.reps||'—'}`).join(' · ');
+            const rpe=ex.rpe?` · RPE ${ex.rpe}`:'';
+            const brand=ex.brand?` · <span style="color:var(--teal)">${ex.brand}</span>`:'';
+            return `<div class="hEx"><div class="hExName">${ex.name}${rpe}${brand}</div><div class="hExSets">${sb}</div></div>`;
+          }).join('')||''}
+          ${h.cardio?`<div style="padding:6px 0;font-size:12px;color:var(--purple)">🏃 ${h.cardio.miles} mi${h.cardio.pace?' @ '+h.cardio.pace+'/mi':''}</div>`:''}
+          ${h.note?`<div style="padding:6px 0;font-size:12px;color:var(--t2);font-style:italic">${h.note}</div>`:''}
           <button class="dangerBtn" onclick="delSess(${h.id})">Delete session</button>
-        </div></div>`;
+        </div>
+      </div>`;
     }).join('')}`;
   }).join('');
 }
+
 function togHist(key){const d=document.getElementById('hd-'+key);if(d)d.classList.toggle('on');}
 function delSess(id){S.history=S.history.filter(h=>h.id!==id);save();renderHistory();renderHome();toast('Session deleted');}
+
+// ── Edit a past session ──────────────────────────────────────
+function openEditSession(id){
+  const h=S.history.find(s=>s.id===id);if(!h)return;
+  let html=`<div class="shTitle">Edit Session</div>
+    <div class="shSub">${fmtDate(h.date)} · ${h.name.replace(/—.*/,'').trim()}</div>
+    <div class="lbl" style="margin-top:0">Session Date</div>
+    <div style="margin-bottom:12px">
+      <input class="fInp" id="esc-date" type="date" value="${toInputDate(h.date)}">
+      <div style="font-size:11px;color:var(--t3);margin-top:5px">Change this if you did the workout on a different day than planned — e.g. Saturday's leg day done on Friday.</div>
+    </div>`;
+
+  // Exercises
+  html+=`<div class="lbl" style="margin-top:0">Exercises</div>`;
+  (h.exercises||[]).forEach((ex,ei)=>{
+    const sets=ex.sets||[];
+    html+=`<div style="background:var(--bg3);border-radius:var(--rsm);padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:600">${ex.name}</div>
+        <input style="width:130px;font-size:11px;padding:4px 7px;border-radius:20px;background:var(--td);color:var(--teal);border:1px solid var(--teal);text-align:center;outline:none" 
+          placeholder="Brand (optional)" value="${ex.brand||''}" 
+          onchange="editSessExBrand(${id},${ei},this.value)">
+      </div>
+      ${sets.map((s,si)=>`<div style="display:flex;gap:6px;margin-bottom:4px;align-items:center">
+        <span style="font-family:var(--fm);font-size:10px;color:var(--t3);width:22px;text-align:center">S${si+1}</span>
+        <input class="inp" type="number" inputmode="decimal" placeholder="lbs" value="${s.weight||''}" style="flex:1" onchange="editSessSet(${id},${ei},${si},'weight',this.value)">
+        <input class="inp" type="number" inputmode="decimal" placeholder="reps" value="${s.reps||''}" style="flex:1" onchange="editSessSet(${id},${ei},${si},'reps',this.value)">
+      </div>`).join('')}
+      <button onclick="addSessSet(${id},${ei})" style="font-size:11px;font-weight:600;color:var(--blue);padding:3px 0;margin-top:2px">+ Add set</button>
+    </div>`;
+  });
+
+  // Add a missed exercise
+  html+=`<button onclick="addSessExercise(${id})" style="width:100%;padding:9px;border-radius:var(--rsm);background:var(--bd);border:1px dashed var(--blue);font-size:12px;font-weight:700;color:var(--blue);margin-bottom:12px">+ Add missed exercise</button>`;
+
+  // Cardio
+  html+=`<div class="lbl">Cardio</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div><div class="fLbl">Miles</div><input class="fInp" id="esc-mi" type="number" step="0.1" placeholder="0.0" value="${h.cardio?.miles||''}"></div>
+      <div><div class="fLbl">Pace (mm:ss)</div><input class="fInp" id="esc-pace" type="text" placeholder="8:30" value="${h.cardio?.pace||''}"></div>
+    </div>`;
+
+  // Session note
+  html+=`<div class="lbl">Session note</div>
+    <textarea class="fInp" id="esc-note" rows="2" placeholder="How did it feel, anything notable..." style="margin-bottom:12px">${h.note||''}</textarea>`;
+
+  html+=`<button class="saveBtn" onclick="saveEditSession(${id})">SAVE CHANGES</button>`;
+  document.getElementById('sheetBody').innerHTML=html;
+  openOverlay();
+}
+
+function editSessSet(sessId,ei,si,field,val){
+  const h=S.history.find(s=>s.id===sessId);if(!h)return;
+  if(!h.exercises[ei].sets[si])return;
+  h.exercises[ei].sets[si][field]=val;
+  save();
+}
+function editSessExBrand(sessId,ei,val){
+  const h=S.history.find(s=>s.id===sessId);if(!h)return;
+  h.exercises[ei].brand=val.trim();
+  save();
+}
+function addSessSet(sessId,ei){
+  const h=S.history.find(s=>s.id===sessId);if(!h)return;
+  const sets=h.exercises[ei].sets;
+  const last=sets[sets.length-1];
+  sets.push({weight:last?.weight||'',reps:'',done:false});
+  save();openEditSession(sessId);
+}
+function addSessExercise(sessId){
+  const h=S.history.find(s=>s.id===sessId);if(!h)return;
+  document.getElementById('sheetBody').innerHTML=`
+    <div class="shTitle">Add Missed Exercise</div>
+    <div class="shSub">${fmtDate(h.date)}</div>
+    <div class="field"><div class="fLbl">Exercise name</div><input class="fInp" id="ame-name" placeholder="e.g. Standing Leg Curl"></div>
+    <div class="field"><div class="fLbl">Equipment brand (optional)</div><input class="fInp" id="ame-brand" placeholder="e.g. Hammer Strength"></div>
+    <div id="ame-sets">
+      <div class="lbl">Sets</div>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input class="fInp" type="number" id="ame-w0" placeholder="lbs" style="flex:1">
+        <input class="fInp" type="number" id="ame-r0" placeholder="reps" style="flex:1">
+      </div>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--blue);padding:4px 0;margin-bottom:10px;cursor:pointer" onclick="addAmeSet()">+ Add another set</div>
+    <button class="saveBtn" onclick="saveAddedExercise(${sessId})">ADD EXERCISE</button>`;
+}
+let _ameSets=1;
+function addAmeSet(){
+  _ameSets++;
+  const wrap=document.getElementById('ame-sets');
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;gap:6px;margin-bottom:6px';
+  row.innerHTML=`<input class="fInp" type="number" id="ame-w${_ameSets-1}" placeholder="lbs" style="flex:1"><input class="fInp" type="number" id="ame-r${_ameSets-1}" placeholder="reps" style="flex:1">`;
+  wrap.appendChild(row);
+}
+function saveAddedExercise(sessId){
+  const h=S.history.find(s=>s.id===sessId);if(!h)return;
+  const name=document.getElementById('ame-name').value.trim();if(!name){toast('Enter a name');return;}
+  const brand=document.getElementById('ame-brand').value.trim();
+  const sets=[];
+  for(let i=0;i<_ameSets;i++){
+    const w=document.getElementById('ame-w'+i)?.value;
+    const r=document.getElementById('ame-r'+i)?.value;
+    if(w||r)sets.push({weight:w||'',reps:r||'',done:true});
+  }
+  if(!sets.length){toast('Add at least one set');return;}
+  const id=name.toLowerCase().replace(/\s+/g,'_')+'_added';
+  h.exercises.push({id,name,brand,sets,rpe:null,note:''});
+  _ameSets=1;save();toast('Exercise added ✓');openEditSession(sessId);
+}
+function saveEditSession(id){
+  const h=S.history.find(s=>s.id===id);if(!h)return;
+  const mi=document.getElementById('esc-mi')?.value;
+  const pace=document.getElementById('esc-pace')?.value;
+  const note=document.getElementById('esc-note')?.value;
+  const dateVal=document.getElementById('esc-date')?.value;
+  if(mi)h.cardio={miles:mi,pace};else h.cardio=null;
+  h.note=note||'';
+  if(dateVal){
+    const newDate=new Date(dateVal).toLocaleDateString('en-US');
+    h.date=newDate;
+    h.week=wkKey(newDate); // update week grouping too
+  }
+  save();closeOverlay();toast('Session updated ✓');renderHistory();
+}
+
+// ── Edit past daily log (diet / sleep / caffeine / steps / weight) ──
+function openEditDay(dateStr){
+  const d=dateStr||today();
+  const meals=S.diet.filter(m=>m.date===d);
+  const sl=S.sleep.find(s=>s.date===d);
+  const bw=S.bodyWeight.find(b=>b.date===d);
+  const steps=S.steps.find(s=>s.date===d);
+  const caf=S.caffeine.find(c=>c.date===d);
+  document.getElementById('sheetBody').innerHTML=`
+    <div class="shTitle">Edit Day</div>
+    <div class="shSub">${fmtDate(d)}</div>
+    <div class="r3" style="margin-bottom:12px;gap:8px">
+      <div><div class="fLbl">Weight (lbs)</div><input class="fInp" id="ed-bw" type="number" step="0.1" placeholder="lbs" value="${bw?.weight||''}"></div>
+      <div><div class="fLbl">Steps</div><input class="fInp" id="ed-steps" type="number" placeholder="steps" value="${steps?.steps||''}"></div>
+      <div><div class="fLbl">Caffeine (mg)</div><input class="fInp" id="ed-caf" type="number" step="25" placeholder="mg" value="${caf?.mg||''}"></div>
+    </div>
+    <div class="r3" style="margin-bottom:12px;gap:8px">
+      <div><div class="fLbl">Sleep (hrs)</div><input class="fInp" id="ed-sl" type="number" step="0.5" placeholder="7.5" value="${sl?.hrs||''}"></div>
+      <div><div class="fLbl">Quality</div>
+        <div style="display:flex;gap:3px;margin-top:5px">${[1,2,3,4,5].map(q=>`<button class="sleepQBtn${sl?.q===q?' on':''}" id="edq-${q}" onclick="togEdQ(${q})">${['😴','😕','😐','😊','🌟'][q-1]}</button>`).join('')}</div>
+      </div>
+      <div><div class="fLbl">Location</div>
+        <div style="display:flex;gap:4px;margin-top:5px">
+          <button class="sleepLocBtn${sl?.loc==='home'?' on':''}" id="edloc-home" onclick="togEdLoc('home')" style="flex:1;font-size:11px">🏠</button>
+          <button class="sleepLocBtn${sl?.loc==='travel'?' on':''}" id="edloc-travel" onclick="togEdLoc('travel')" style="flex:1;font-size:11px">✈️</button>
+        </div>
+      </div>
+    </div>
+    <div class="lbl">Meals on this day</div>
+    <div id="ed-meals">${meals.map(m=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--bdr)">
+      <div style="flex:1;font-size:13px">${m.name} <span style="font-family:var(--fm);font-size:11px;color:var(--t2)">${m.p||0}p·${m.c||0}c·${m.f||0}f·${m.cal||0}kcal</span></div>
+      <button onclick="delMealById(${m.id},'${d}')" style="color:var(--red);font-size:16px">×</button>
+    </div>`).join('')||'<div style="font-size:12px;color:var(--t3);padding:8px 0">No meals logged.</div>'}</div>
+    <button onclick="openAddMealForDate('${d}')" style="width:100%;padding:9px;border-radius:var(--rsm);background:var(--gd);border:1px dashed var(--green);font-size:12px;font-weight:700;color:var(--green);margin:8px 0 12px">+ Add meal for this day</button>
+    <button class="saveBtn" onclick="saveEditDay('${d}')">SAVE DAY</button>`;
+  openOverlay();
+}
+
+let _edQ=0,_edLoc='';
+function togEdQ(q){_edQ=_edQ===q?0:q;document.querySelectorAll('[id^="edq-"]').forEach((b,i)=>b.classList.toggle('on',i+1===_edQ));}
+function togEdLoc(loc){_edLoc=_edLoc===loc?'':loc;document.getElementById('edloc-home').classList.toggle('on',_edLoc==='home');document.getElementById('edloc-travel').classList.toggle('on',_edLoc==='travel');}
+
+function delMealById(id,dateStr){
+  S.diet=S.diet.filter(m=>m.id!==id);save();openEditDay(dateStr);
+}
+function openAddMealForDate(dateStr){
+  const now=new Date(dateStr);const t='12:00';
+  document.getElementById('sheetBody').innerHTML=`<div class="shTitle">Add Meal</div><div class="shSub">${fmtDate(dateStr)}</div>
+    <div class="field"><div class="fLbl">Meal name</div><input class="fInp" id="am-name" placeholder="e.g. Chicken + rice"></div>
+    <div class="r3" style="margin-bottom:12px"><div><div class="fLbl">Protein (g)</div><input class="fInp" id="am-p" type="number" placeholder="0"></div><div><div class="fLbl">Carbs (g)</div><input class="fInp" id="am-c" type="number" placeholder="0"></div><div><div class="fLbl">Fat (g)</div><input class="fInp" id="am-f" type="number" placeholder="0"></div></div>
+    <div class="r2" style="margin-bottom:12px"><div><div class="fLbl">Calories</div><input class="fInp" id="am-cal" type="number" placeholder="auto-calc"></div><div><div class="fLbl">Time</div><input class="fInp" id="am-time" value="${t}"></div></div>
+    <button class="saveBtn" onclick="saveMealForDate('${dateStr}')">ADD MEAL</button>`;
+}
+function saveMealForDate(dateStr){
+  const p=parseFloat(document.getElementById('am-p').value)||0;
+  const c=parseFloat(document.getElementById('am-c').value)||0;
+  const f=parseFloat(document.getElementById('am-f').value)||0;
+  const cal=parseFloat(document.getElementById('am-cal').value)||Math.round(p*4+c*4+f*9);
+  S.diet.unshift({id:Date.now(),date:dateStr,name:document.getElementById('am-name').value||'Meal',p,c,f,cal,time:document.getElementById('am-time').value,note:''});
+  save();toast('Meal added ✓');openEditDay(dateStr);
+}
+function saveEditDay(dateStr){
+  const bwVal=document.getElementById('ed-bw')?.value;
+  const stepsVal=document.getElementById('ed-steps')?.value;
+  const cafVal=document.getElementById('ed-caf')?.value;
+  const slHrs=document.getElementById('ed-sl')?.value;
+  const sl=S.sleep.find(s=>s.date===dateStr);
+  const slQ=_edQ||(sl?.q||0);
+  const slLoc=_edLoc||(sl?.loc||'');
+  if(bwVal){S.bodyWeight=S.bodyWeight.filter(b=>b.date!==dateStr);S.bodyWeight.unshift({date:dateStr,weight:parseFloat(bwVal)});}
+  if(stepsVal){S.steps=S.steps.filter(s=>s.date!==dateStr);S.steps.unshift({date:dateStr,steps:parseInt(stepsVal)||0});}
+  if(cafVal){S.caffeine=S.caffeine.filter(c=>c.date!==dateStr);S.caffeine.unshift({date:dateStr,mg:parseInt(cafVal)||0});}
+  if(slHrs||slQ||slLoc){S.sleep=S.sleep.filter(s=>s.date!==dateStr);S.sleep.unshift({date:dateStr,hrs:parseFloat(slHrs)||0,q:slQ,loc:slLoc});}
+  save();_edQ=0;_edLoc='';closeOverlay();toast('Day updated ✓');
+  if(CUR_SCREEN==='diet')renderDiet();
+}
+
+// ── Equipment brand tracking in workout ──────────────────────
+function setBrand(exId,val){
+  if(!WS[exId])return;
+  WS[exId].brand=val.trim();
+}
+
+// ═══════════════════════ BACKUP / RESTORE ═══════════════════════
+function exportBackup(){
+  const backup={
+    exportedAt:new Date().toISOString(),
+    version:'lift_v5',
+    data:S,
+    program:PROG
+  };
+  const json=JSON.stringify(backup,null,2);
+  const blob=new Blob([json],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const dateStr=new Date().toLocaleDateString('en-US').replace(/\//g,'-');
+  a.href=url;a.download=`lift-backup-${dateStr}.json`;
+  document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+  toast('Backup downloaded ✓');
+}
+
+function importBackup(event){
+  const file=event.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try{
+      const backup=JSON.parse(e.target.result);
+      if(!backup.data||!backup.version){toast('Invalid backup file');return;}
+      const d=backup.data;
+      // Merge strategy: new records win on id conflict, existing preserved
+      const mergeArr=(existing,incoming,key='id')=>{
+        const map=new Map(existing.map(x=>[x[key],x]));
+        incoming.forEach(x=>{if(!map.has(x[key]))map.set(x[key],x);});
+        return [...map.values()];
+      };
+      S.history=mergeArr(S.history,d.history||[]);
+      S.diet=mergeArr(S.diet,d.diet||[]);
+      S.sleep=mergeArr(S.sleep,d.sleep||[],'date');
+      S.bodyWeight=mergeArr(S.bodyWeight,d.bodyWeight||[],'date');
+      S.steps=mergeArr(S.steps,d.steps||[],'date');
+      S.caffeine=mergeArr(S.caffeine,d.caffeine||[],'date');
+      S.skillLogs=d.skillLogs||S.skillLogs;
+      S.skills=d.skills||S.skills;
+      if(backup.program)PROG=backup.program;
+      save();saveProg();
+      toast('Backup restored ✓');
+      renderHome();renderHistory();
+    }catch(err){toast('Could not read backup file');}
+  };
+  reader.readAsText(file);
+  event.target.value='';
+}
 
 // ═══════════════════════ PROGRAM EDITOR ═══════════════════════
 function openEditor(){
@@ -1061,7 +1481,6 @@ function resetProg(){PROG=JSON.parse(JSON.stringify(DEFAULT_PROG));saveProg();cl
 // ═══════════════════════ OVERLAY / TOAST ═══════════════════════
 function openOverlay(){document.getElementById('overlay').classList.add('on');}
 function closeOverlay(e){
-  // Only close if the click landed directly on the dark backdrop, not inside the sheet
   if(e&&e.target!==document.getElementById('overlay'))return;
   document.getElementById('overlay').classList.remove('on');
 }
@@ -1070,7 +1489,6 @@ function toast(msg){const t=document.getElementById('toastEl');t.textContent=msg
 // ═══════════════════════ INIT ═══════════════════════
 load();
 renderHome();
-// btnEdit only shown on home screen
 document.getElementById('btnEdit').style.display='flex';
 </script>
 </body>
