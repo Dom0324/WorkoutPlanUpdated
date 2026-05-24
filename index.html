@@ -210,6 +210,17 @@ canvas{width:100%!important;display:block}
 .sleepMeta{font-size:11px;color:var(--t2);margin-top:1px}
 .sleepDel{color:var(--red);font-size:18px;padding:0 3px}
 
+/* brand picker */
+.brandPicker{margin-top:7px}
+.brandGroupLabel{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin:5px 0 3px}
+.brandChips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:2px}
+.brandChip{font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2);cursor:pointer;transition:all .12s var(--ease);white-space:nowrap}
+.brandChip.on{background:var(--td);color:var(--teal);border-color:var(--teal)}
+.brandChip:active{transform:scale(.93)}
+.brandCustomWrap{margin-top:4px}
+.brandCustomInp{width:100%;font-size:12px;padding:6px 10px;border-radius:20px;background:var(--bg3);color:var(--t1);border:1px solid var(--bdr);outline:none;transition:border-color .15s}
+.brandCustomInp:focus{border-color:var(--teal);background:var(--td)}
+
 /* history */
 .histItem{background:var(--bg2);border-radius:var(--r);border:1px solid var(--bdr);margin-bottom:8px;overflow:hidden;box-shadow:var(--sh)}
 .histHdr{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer}
@@ -477,7 +488,16 @@ function toInputDate(ds){
   if(!ds)return '';
   const d=new Date(ds);
   if(isNaN(d))return '';
-  return d.toISOString().split('T')[0];
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function fromInputDate(iso){
+  // Convert "2026-05-23" → "5/23/2026" without UTC shift
+  if(!iso)return '';
+  const [y,m,d]=iso.split('-').map(Number);
+  return new Date(y,m-1,d).toLocaleDateString('en-US');
 }
 function getLastSession(exId){for(let i=S.history.length-1;i>=0;i--){const ex=S.history[i].exercises?.find(e=>e.id===exId);if(ex)return ex;}return null;}
 function fmtSets(sets){if(!sets?.length)return '—';return sets.filter(s=>s.weight||s.reps).slice(0,3).map(s=>`${s.weight||'?'}×${s.reps||'?'}`).join('  ');}
@@ -608,7 +628,7 @@ function buildWorkout(day){
           View history
         </button>
         <div class="exHistDrawer" id="histDrawer-${ex.id}"></div>`:''}
-        <div style="margin-top:7px"><input style="width:100%;font-size:11px;padding:5px 9px;border-radius:20px;background:var(--td);color:var(--teal);border:1px solid var(--teal);outline:none" placeholder="Equipment brand (optional, e.g. Hammer Strength)" value="${WS[ex.id]?.brand||last?.brand||''}" onchange="setBrand('${ex.id}',this.value)"></div>        <div class="setsWrap" id="sw-${ex.id}">
+        <div style="margin-top:7px">${brandPickerHTML(ex.id, WS[ex.id]?.brand||last?.brand||'')}</div>        <div class="setsWrap" id="sw-${ex.id}">
           ${d.sets.map((s,si)=>setRowHTML(ex.id,si,s)).join('')}
           <button class="addSet" onclick="addSet('${ex.id}')">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add set
@@ -1211,13 +1231,9 @@ function openEditSession(id){
   (h.exercises||[]).forEach((ex,ei)=>{
     const sets=ex.sets||[];
     html+=`<div style="background:var(--bg3);border-radius:var(--rsm);padding:10px 12px;margin-bottom:8px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="font-size:13px;font-weight:600">${ex.name}</div>
-        <input style="width:130px;font-size:11px;padding:4px 7px;border-radius:20px;background:var(--td);color:var(--teal);border:1px solid var(--teal);text-align:center;outline:none" 
-          placeholder="Brand (optional)" value="${ex.brand||''}" 
-          onchange="editSessExBrand(${id},${ei},this.value)">
-      </div>
-      ${sets.map((s,si)=>`<div style="display:flex;gap:6px;margin-bottom:4px;align-items:center">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px">${ex.name}</div>
+      ${brandPickerHTML('ess-'+id+'-'+ei, ex.brand||'')}
+      ${sets.map((s,si)=>`<div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;margin-top:${si===0?'8px':'0'}">
         <span style="font-family:var(--fm);font-size:10px;color:var(--t3);width:22px;text-align:center">S${si+1}</span>
         <input class="inp" type="number" inputmode="decimal" placeholder="lbs" value="${s.weight||''}" style="flex:1" onchange="editSessSet(${id},${ei},${si},'weight',this.value)">
         <input class="inp" type="number" inputmode="decimal" placeholder="reps" value="${s.reps||''}" style="flex:1" onchange="editSessSet(${id},${ei},${si},'reps',this.value)">
@@ -1255,6 +1271,16 @@ function editSessExBrand(sessId,ei,val){
   const h=S.history.find(s=>s.id===sessId);if(!h)return;
   h.exercises[ei].brand=val.trim();
   save();
+}
+// pickBrand also routes here for edit-session pickers via the exId naming convention 'ess-{sessId}-{ei}'
+const _origSetBrand=setBrand;
+function setBrand(exId,val){
+  if(exId.startsWith('ess-')){
+    const parts=exId.split('-');const sessId=parseInt(parts[1]);const ei=parseInt(parts[2]);
+    editSessExBrand(sessId,ei,val);
+  } else {
+    if(WS[exId]) WS[exId].brand=val.trim();
+  }
 }
 function addSessSet(sessId,ei){
   const h=S.history.find(s=>s.id===sessId);if(!h)return;
@@ -1313,11 +1339,15 @@ function saveEditSession(id){
   if(mi)h.cardio={miles:mi,pace};else h.cardio=null;
   h.note=note||'';
   if(dateVal){
-    const newDate=new Date(dateVal).toLocaleDateString('en-US');
-    h.date=newDate;
-    h.week=wkKey(newDate); // update week grouping too
+    const newDate=fromInputDate(dateVal); // timezone-safe conversion
+    if(newDate){
+      h.date=newDate;
+      h.week=wkKey(newDate);
+      // Re-sort history so the moved session appears in correct position
+      S.history.sort((a,b)=>new Date(b.date)-new Date(a.date));
+    }
   }
-  save();closeOverlay();toast('Session updated ✓');renderHistory();
+  save();closeOverlay();toast('Session updated ✓');renderHistory();renderHome();
 }
 
 // ── Edit past daily log (diet / sleep / caffeine / steps / weight) ──
@@ -1397,10 +1427,64 @@ function saveEditDay(dateStr){
   if(CUR_SCREEN==='diet')renderDiet();
 }
 
-// ── Equipment brand tracking in workout ──────────────────────
+// ── Equipment brand data ─────────────────────────────────────
+const BRANDS = {
+  'Machines': ['Hammer Strength','Hoist','Star Trac','Life Fitness','Matrix'],
+  'Free Weights': ['Free Weights','Barbell','EZ Bar','Dumbbell'],
+};
+const BRAND_CUSTOM_VAL = '__custom__';
+
+function brandPickerHTML(exId, currentBrand){
+  const allPresets = Object.values(BRANDS).flat();
+  const isCustom = currentBrand && !allPresets.includes(currentBrand);
+  let h = `<div class="brandPicker" id="bp-${exId}">`;
+  Object.entries(BRANDS).forEach(([group, brands])=>{
+    h += `<div class="brandGroupLabel">${group}</div><div class="brandChips">`;
+    brands.forEach(b=>{
+      h += `<button class="brandChip${currentBrand===b?' on':''}" onclick="pickBrand('${exId}','${b}')">${b}</button>`;
+    });
+    h += `</div>`;
+  });
+  // Custom / Other
+  h += `<div class="brandGroupLabel">Other</div><div class="brandChips">
+    <button class="brandChip${isCustom?' on':''}" id="bc-other-${exId}" onclick="pickBrand('${exId}','${BRAND_CUSTOM_VAL}')">Other / Custom</button>
+  </div>`;
+  h += `<div class="brandCustomWrap${isCustom?' on':''}" id="bcw-${exId}">
+    <input class="brandCustomInp" id="bci-${exId}" placeholder="Type brand name..." value="${isCustom?currentBrand:''}" onchange="setBrand('${exId}',this.value)" oninput="setBrand('${exId}',this.value)">
+  </div>`;
+  h += `</div>`;
+  return h;
+}
+
+function pickBrand(exId, val){
+  if(val === BRAND_CUSTOM_VAL){
+    // Toggle custom input visible, clear preset selection
+    const otherBtn = document.getElementById('bc-other-'+exId);
+    const customWrap = document.getElementById('bcw-'+exId);
+    const wasOn = otherBtn?.classList.contains('on');
+    // Deselect all presets
+    document.querySelectorAll(`#bp-${exId} .brandChip`).forEach(b=>b.classList.remove('on'));
+    if(!wasOn){
+      otherBtn?.classList.add('on');
+      customWrap?.classList.add('on');
+      setTimeout(()=>document.getElementById('bci-'+exId)?.focus(),100);
+    } else {
+      customWrap?.classList.remove('on');
+      setBrand(exId,'');
+    }
+    return;
+  }
+  // Select a preset — deselect all, select this one, hide custom input
+  document.querySelectorAll(`#bp-${exId} .brandChip`).forEach(b=>b.classList.remove('on'));
+  document.getElementById('bcw-'+exId)?.classList.remove('on');
+  const btn = document.querySelector(`#bp-${exId} .brandChip[onclick*="'${val}'"]`);
+  if(btn) btn.classList.add('on');
+  setBrand(exId, val);
+  toast(`Brand: ${val}`);
+}
+
 function setBrand(exId,val){
-  if(!WS[exId])return;
-  WS[exId].brand=val.trim();
+  if(WS[exId]) WS[exId].brand = val.trim();
 }
 
 // ═══════════════════════ BACKUP / RESTORE ═══════════════════════
