@@ -448,11 +448,47 @@ const TARGETS={protein:185,carbs:310,fat:75,calories:2650};
 
 // ═══════════════════════ STATE ═══════════════════════
 let PROG={};
-let S={history:[],diet:[],skillLogs:{},skills:[],bodyWeight:[],steps:[],sleep:[],caffeine:[]};
+let S={history:[],diet:[],skillLogs:{},skills:[],bodyWeight:[],steps:[],sleep:[],caffeine:[],savedMeals:[]};
 let WS={};
 let CUR_DAY=null;
+const APP_VERSION = '1.0.3'; // bump this on every deploy
+const WS_DRAFT_KEY = 'lift_ws_draft';
+
 let SEL_LIFT=null;
 let SEL_METRIC='max'; // 'max' | 'best' | 'vol'
+
+// ── Draft auto-save (debounced, lightweight) ────────────────
+let _draftTimer=null;
+function saveDraft(){
+  if(!CUR_DAY||!WS)return;
+  clearTimeout(_draftTimer);
+  _draftTimer=setTimeout(()=>{
+    try{
+      localStorage.setItem(WS_DRAFT_KEY, JSON.stringify({
+        dayId: CUR_DAY.id,
+        date: today(),
+        ws: WS
+      }));
+    }catch(e){}
+  }, 600); // 600ms debounce — won't fire on every keystroke
+}
+
+function loadDraft(){
+  try{
+    const raw=localStorage.getItem(WS_DRAFT_KEY);
+    if(!raw)return null;
+    const draft=JSON.parse(raw);
+    // Only restore if it's from today and the day still exists in program
+    if(draft.date===today()&&PROG.days.find(d=>d.id===draft.dayId))return draft;
+    // Stale draft — clear it
+    localStorage.removeItem(WS_DRAFT_KEY);
+  }catch(e){}
+  return null;
+}
+
+function clearDraft(){
+  try{localStorage.removeItem(WS_DRAFT_KEY);}catch(e){}
+}
 
 function load(){
   try{const r=localStorage.getItem('lift_v5');if(r){const d=JSON.parse(r);S={...S,...d};}const p=localStorage.getItem('lift_prog_v5');PROG=p?JSON.parse(p):JSON.parse(JSON.stringify(DEFAULT_PROG));if(!S.skills||!S.skills.length)S.skills=JSON.parse(JSON.stringify(DEFAULT_SKILLS));}
@@ -520,18 +556,22 @@ function parseRxCeil(rx){
 }
 
 // Check if overload is due: last 2 sessions both hit the rep ceiling across all sets
+// Excludes any session logged today so a completed workout doesn't immediately re-trigger the flag
 function getOverloadStatus(exId,rx){
-  const hist=getExHistory(exId,3);if(hist.length<1)return null;
+  const allHist=getExHistory(exId,4);
+  // Filter out sessions from today — if you already completed this workout today,
+  // don't count it when deciding whether to show the overload flag
+  const hist=allHist.filter(h=>h.date!==today());
+  if(hist.length<1)return null;
   const ceil=parseRxCeil(rx);if(!ceil)return null;
-  // Check if most recent session hit ceiling on all working sets
   const checkSession=(sess)=>{
     const ws=sess.sets.filter(s=>s.weight||s.reps);if(!ws.length)return false;
     return ws.every(s=>parseInt(s.reps)>=ceil);
   };
   const lastHitCeil=checkSession(hist[0]);
   const prevHitCeil=hist.length>=2&&checkSession(hist[1]);
-  if(lastHitCeil&&prevHitCeil)return 'overload'; // 2+ sessions at ceiling → add weight
-  if(lastHitCeil)return 'approaching';            // 1 session at ceiling → getting close
+  if(lastHitCeil&&prevHitCeil)return 'overload';
+  if(lastHitCeil)return 'approaching';
   return null;
 }
 function cOf(c){const m={green:'var(--green)',blue:'var(--blue)',amber:'var(--amber)',purple:'var(--purple)',teal:'var(--teal)'};return m[c]||'var(--t3)';}
@@ -545,6 +585,22 @@ function renderHome(){
   renderWeekBar();
   const todayName=new Date().toLocaleDateString('en-US',{weekday:'long'});
   const list=document.getElementById('daysList');list.innerHTML='';
+
+  // In-progress draft banner
+  const draft=loadDraft();
+  const draftBanner=document.getElementById('draftBanner');
+  if(draftBanner)draftBanner.remove();
+  if(draft){
+    const day=PROG.days.find(d=>d.id===draft.dayId);
+    if(day){
+      const filledSets=Object.values(draft.ws).reduce((t,ex)=>t+ex.sets.filter(s=>s.weight||s.reps).length,0);
+      const banner=document.createElement('div');
+      banner.id='draftBanner';
+      banner.style.cssText='background:var(--gd);border:1px solid var(--green);border-radius:var(--r);padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px';
+      banner.innerHTML=`<div><div style="font-size:13px;font-weight:700;color:var(--green)">↩ Resume ${day.name}</div><div style="font-size:11px;color:var(--t2);margin-top:2px">${filledSets} set${filledSets!==1?'s':''} logged · tap to continue</div></div><button onclick="openWorkout('${day.id}')" style="background:var(--green);color:#0A0A0A;font-size:12px;font-weight:700;padding:7px 14px;border-radius:20px">Resume</button>`;
+      list.before(banner);
+    }
+  }
   PROG.days.forEach(day=>{
     const isToday=day.name===todayName;
     const doneToday=S.history.find(h=>h.dayId===day.id&&h.date===today());
@@ -588,13 +644,37 @@ function renderWeekBar(){
 // ═══════════════════════ WORKOUT ═══════════════════════
 function openWorkout(dayId){
   const day=PROG.days.find(d=>d.id===dayId);if(!day||day.rest)return;
-  CUR_DAY=day;WS={};
-  day.blocks.forEach(b=>b.exercises.forEach(ex=>{
-    const last=getLastSession(ex.id);
-    WS[ex.id]={sets:Array.from({length:ex.sets},(_,i)=>({weight:last?.sets[i]?.weight||'',reps:last?.sets[i]?.reps||'',done:false})),rpe:null,note:''};
-  }));
+  CUR_DAY=day;
+
+  // Check for an in-progress draft from today
+  const draft=loadDraft();
+  if(draft&&draft.dayId===dayId){
+    WS=draft.ws;
+    // Ensure any exercises added/removed from program since draft are reconciled
+    day.blocks.forEach(b=>b.exercises.forEach(ex=>{
+      if(!WS[ex.id]){
+        const last=getLastSession(ex.id);
+        WS[ex.id]={sets:Array.from({length:ex.sets},(_,i)=>({weight:last?.sets[i]?.weight||'',reps:last?.sets[i]?.reps||'',done:false})),rpe:null,note:''};
+      }
+    }));
+  } else {
+    WS={};
+    day.blocks.forEach(b=>b.exercises.forEach(ex=>{
+      const last=getLastSession(ex.id);
+      WS[ex.id]={sets:Array.from({length:ex.sets},(_,i)=>({weight:last?.sets[i]?.weight||'',reps:last?.sets[i]?.reps||'',done:false})),rpe:null,note:''};
+    }));
+  }
+
   goScreen('workout',day.short);
   document.getElementById('workoutContent').innerHTML=buildWorkout(day);
+
+  // Show resume banner if restoring a draft
+  if(draft&&draft.dayId===dayId){
+    const banner=document.createElement('div');
+    banner.style.cssText='position:sticky;top:0;z-index:10;background:var(--gd);border-bottom:1px solid var(--green);padding:8px 14px;display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--green)';
+    banner.innerHTML=`<span>↩ Session restored from earlier today</span><button onclick="this.parentElement.remove()" style="color:var(--green);font-size:16px;line-height:1">×</button>`;
+    document.getElementById('workoutContent').prepend(banner);
+  }
 }
 
 function buildWorkout(day){
@@ -635,7 +715,7 @@ function buildWorkout(day){
           </button>
         </div>
         <div class="rpeWrap"><span class="rpeLbl">RPE</span>${[6,7,8,9,10].map(r=>`<button class="rpeB${d.rpe===r?' on':''}" onclick="setRPE('${ex.id}',${r})">${r}</button>`).join('')}</div>
-        <textarea class="noteInp" placeholder="Notes..." onchange="WS['${ex.id}'].note=this.value">${d.note}</textarea>
+        <textarea class="noteInp" placeholder="Notes..." onchange="WS['${ex.id}'].note=this.value;saveDraft()">${d.note}</textarea>
       </div>`;
     });
     h+='</div>';
@@ -646,11 +726,11 @@ function buildWorkout(day){
   return h;
 }
 
-function setRowHTML(exId,si,s){return `<div class="setRow" id="sr-${exId}-${si}"><span class="setLbl">S${si+1}</span><input class="inp" type="number" inputmode="decimal" placeholder="lbs" value="${s.weight}" onchange="WS['${exId}'].sets[${si}].weight=this.value" onfocus="this.select()"><input class="inp" type="number" inputmode="decimal" placeholder="reps" value="${s.reps}" onchange="WS['${exId}'].sets[${si}].reps=this.value" onfocus="this.select()"><button class="setOk ${s.done?'done':''}" onclick="togSet('${exId}',${si})">${s.done?'✓':''}</button></div>`;}
+function setRowHTML(exId,si,s){return `<div class="setRow" id="sr-${exId}-${si}"><span class="setLbl">S${si+1}</span><input class="inp" type="number" inputmode="decimal" placeholder="lbs" value="${s.weight}" onchange="WS['${exId}'].sets[${si}].weight=this.value;saveDraft()" onfocus="this.select()"><input class="inp" type="number" inputmode="decimal" placeholder="reps" value="${s.reps}" onchange="WS['${exId}'].sets[${si}].reps=this.value;saveDraft()" onfocus="this.select()"><button class="setOk ${s.done?'done':''}" onclick="togSet('${exId}',${si})">${s.done?'✓':''}</button></div>`;}
 
-function togSet(exId,si){const s=WS[exId].sets[si];s.done=!s.done;const b=document.querySelector(`#sr-${exId}-${si} .setOk`);if(b){b.className=`setOk ${s.done?'done':''}`;b.textContent=s.done?'✓':'';}if(s.done&&navigator.vibrate)navigator.vibrate(8);}
-function addSet(exId){const d=WS[exId];const last=d.sets[d.sets.length-1];d.sets.push({weight:last?.weight||'',reps:last?.reps||'',done:false});const si=d.sets.length-1;const sw=document.getElementById('sw-'+exId);const btn=sw.querySelector('.addSet');const div=document.createElement('div');div.innerHTML=setRowHTML(exId,si,d.sets[si]);sw.insertBefore(div.firstElementChild,btn);}
-function setRPE(exId,val){WS[exId].rpe=val;document.querySelectorAll(`#ex-${exId} .rpeB`).forEach((b,i)=>b.classList.toggle('on',[6,7,8,9,10][i]===val));}
+function togSet(exId,si){const s=WS[exId].sets[si];s.done=!s.done;const b=document.querySelector(`#sr-${exId}-${si} .setOk`);if(b){b.className=`setOk ${s.done?'done':''}`;b.textContent=s.done?'✓':'';}if(s.done&&navigator.vibrate)navigator.vibrate(8);saveDraft();}
+function addSet(exId){const d=WS[exId];const last=d.sets[d.sets.length-1];d.sets.push({weight:last?.weight||'',reps:last?.reps||'',done:false});const si=d.sets.length-1;const sw=document.getElementById('sw-'+exId);const btn=sw.querySelector('.addSet');const div=document.createElement('div');div.innerHTML=setRowHTML(exId,si,d.sets[si]);sw.insertBefore(div.firstElementChild,btn);saveDraft();}
+function setRPE(exId,val){WS[exId].rpe=val;document.querySelectorAll(`#ex-${exId} .rpeB`).forEach((b,i)=>b.classList.toggle('on',[6,7,8,9,10][i]===val));saveDraft();}
 
 function togHistDrawer(exId){
   const btn=document.getElementById('histBtn-'+exId);
@@ -690,6 +770,7 @@ function finishWorkout(){
   day.blocks.forEach(b=>b.exercises.forEach(ex=>{const d=WS[ex.id];if(d.sets.filter(s=>s.weight||s.reps).length)exercises.push({id:ex.id,name:ex.name,sets:d.sets,rpe:d.rpe,note:d.note,brand:d.brand||''});}));
   const mi=document.getElementById('c-mi')?.value;const pace=document.getElementById('c-pace')?.value;
   S.history.unshift({id:Date.now(),date:today(),dayId:day.id,name:day.title,dur:day.dur,exercises,cardio:mi?{miles:mi,pace}:null,week:wkKey()});
+  clearDraft(); // remove in-progress draft now that session is saved
   save();toast('Workout saved 💪');setTimeout(()=>{navBack();renderHome();},500);
 }
 
@@ -819,7 +900,7 @@ function renderDiet(){
     <div class="card" style="padding:14px">
       <div style="font-size:13px;color:var(--t2);margin-bottom:10px">Forgot to log something? Go back and fill it in.</div>
       <input class="fInp" id="editDayPicker" type="date" style="margin-bottom:10px" value="${new Date().toISOString().split('T')[0]}">
-      <button onclick="openEditDay(new Date(document.getElementById('editDayPicker').value).toLocaleDateString('en-US'))" style="width:100%;padding:10px;border-radius:var(--rsm);background:var(--bd);border:1px solid var(--blue);font-size:13px;font-weight:700;color:var(--blue)">Open This Day</button>
+      <button onclick="openEditDay(fromInputDate(document.getElementById('editDayPicker').value))" style="width:100%;padding:10px;border-radius:var(--rsm);background:var(--bd);border:1px solid var(--blue);font-size:13px;font-weight:700;color:var(--blue)">Open This Day</button>
     </div>`;
 
   if(S.bodyWeight.length>=2)setTimeout(()=>{const d=S.bodyWeight.slice(0,10).reverse();drawLine(document.getElementById('bw-mini'),d.map(x=>x.weight),d.map(x=>{const dd=new Date(x.date);return(dd.getMonth()+1)+'/'+dd.getDate();}),'var(--teal)',70);},50);
@@ -924,20 +1005,42 @@ function drawSleepChart(data){
 
 function openAddMeal(){
   const now=new Date();const t=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
-  document.getElementById('sheetBody').innerHTML=`<div class="shTitle">Log a Meal</div><div class="shSub">Track macros and notes</div>
+  document.getElementById('sheetBody').innerHTML=`
+    <div class="shTitle">Log a Meal</div><div class="shSub">Track macros and notes</div>
+    ${savedMealsHTML(today())}
+    <div class="lbl" style="margin-top:0">New Meal</div>
     <div class="field"><div class="fLbl">Meal name</div><input class="fInp" id="m-name" placeholder="e.g. Chicken + rice + veggies"></div>
     <div class="r3" style="margin-bottom:12px"><div><div class="fLbl">Protein (g)</div><input class="fInp" id="m-p" type="number" placeholder="0"></div><div><div class="fLbl">Carbs (g)</div><input class="fInp" id="m-c" type="number" placeholder="0"></div><div><div class="fLbl">Fat (g)</div><input class="fInp" id="m-f" type="number" placeholder="0"></div></div>
     <div class="r2" style="margin-bottom:12px"><div><div class="fLbl">Calories</div><input class="fInp" id="m-cal" type="number" placeholder="auto-calc"></div><div><div class="fLbl">Time</div><input class="fInp" id="m-time" value="${t}"></div></div>
     <div class="field"><div class="fLbl">Notes (optional)</div><input class="fInp" id="m-note" placeholder="e.g. post-workout, on the road..."></div>
-    <button class="saveBtn" onclick="saveMeal()">SAVE MEAL</button>`;
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <button class="saveBtn" style="flex:2" onclick="saveMeal(false)">LOG MEAL</button>
+      <button class="saveBtn" style="flex:1;background:var(--blue)" onclick="saveMeal(true)">LOG + SAVE</button>
+    </div>
+    <div style="font-size:11px;color:var(--t3);text-align:center;margin-top:6px">LOG + SAVE stores for quick reuse across any day</div>`;
   openOverlay();setTimeout(()=>document.getElementById('m-name')?.focus(),300);
 }
 
-function saveMeal(){
-  const p=parseFloat(document.getElementById('m-p').value)||0;const c=parseFloat(document.getElementById('m-c').value)||0;const f=parseFloat(document.getElementById('m-f').value)||0;
-  const calInp=parseFloat(document.getElementById('m-cal').value);const cal=calInp||Math.round(p*4+c*4+f*9);
-  S.diet.unshift({id:Date.now(),date:today(),name:document.getElementById('m-name').value||'Meal',p,c,f,cal,time:document.getElementById('m-time').value,note:document.getElementById('m-note').value});
-  save();closeOverlay();toast('Meal logged 🥗');setTimeout(renderDiet,100);
+function saveMeal(andSave){
+  const p=parseFloat(document.getElementById('m-p').value)||0;
+  const c=parseFloat(document.getElementById('m-c').value)||0;
+  const f=parseFloat(document.getElementById('m-f').value)||0;
+  const calInp=parseFloat(document.getElementById('m-cal').value);
+  const cal=calInp||Math.round(p*4+c*4+f*9);
+  const name=document.getElementById('m-name').value||'Meal';
+  S.diet.unshift({id:Date.now(),date:today(),name,p,c,f,cal,time:document.getElementById('m-time').value,note:document.getElementById('m-note').value||''});
+  if(andSave){
+    if(!S.savedMeals)S.savedMeals=[];
+    if(!S.savedMeals.find(m=>m.name.toLowerCase()===name.toLowerCase())){
+      S.savedMeals.push({name,p,c,f,cal});
+      toast('Logged + saved to library 📌');
+    } else {
+      toast('Logged (already in library)');
+    }
+  } else {
+    toast('Meal logged 🥗');
+  }
+  save();closeOverlay();setTimeout(renderDiet,100);
 }
 function delMeal(id){S.diet=S.diet.filter(m=>m.id!==id);save();renderDiet();toast('Meal removed');}
 
@@ -1170,7 +1273,10 @@ function renderHistory(){
     <button onclick="document.getElementById('importFile').click()" style="flex:1;padding:10px;border-radius:var(--rsm);background:var(--bd);border:1px solid var(--blue);font-size:12px;font-weight:700;color:var(--blue)">⬆ Import Backup</button>
     <input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(event)">
   </div>
-  <div style="font-size:11px;color:var(--t3);margin-bottom:16px;line-height:1.5">Export saves everything — workouts, diet, sleep, weight, caffeine, skills. Import merges new data on top of existing (won't delete anything).</div>`;
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div style="font-size:11px;color:var(--t3);line-height:1.5;flex:1">Export saves everything. Import merges without deleting.</div>
+    <div style="font-family:var(--fm);font-size:10px;color:var(--t3);padding:3px 8px;border-radius:20px;background:var(--bg3);white-space:nowrap;margin-left:10px">v${APP_VERSION}</div>
+  </div>`;
 
   if(!S.history.length){c.innerHTML=backupBar+`<div class="empty"><div class="emIco">📋</div><div class="emT">No sessions yet</div><div class="emS">Complete your first workout to see it here.</div></div>`;return;}
   const cols={sat:'var(--green)',sun:'var(--blue)',mon:'var(--amber)',tue:'var(--purple)',wed:'var(--blue)',thu:'var(--amber)',fri:'var(--t3)'};
@@ -1280,6 +1386,7 @@ function setBrand(exId,val){
     editSessExBrand(sessId,ei,val);
   } else {
     if(WS[exId]) WS[exId].brand=val.trim();
+    saveDraft();
   }
 }
 function addSessSet(sessId,ei){
@@ -1395,21 +1502,67 @@ function togEdLoc(loc){_edLoc=_edLoc===loc?'':loc;document.getElementById('edloc
 function delMealById(id,dateStr){
   S.diet=S.diet.filter(m=>m.id!==id);save();openEditDay(dateStr);
 }
+
+// ── Saved meals library ──────────────────────────────────────
+function savedMealsHTML(targetDate){
+  if(!S.savedMeals||!S.savedMeals.length)return '';
+  return `<div class="lbl" style="margin-top:0">Quick Add — Saved Meals</div>
+    <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:14px">
+      ${S.savedMeals.map((m,i)=>`<div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border-radius:var(--rsm);padding:8px 10px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600">${m.name}</div>
+          <div style="font-family:var(--fm);font-size:11px;color:var(--t2);margin-top:1px">${m.p}g P · ${m.c}g C · ${m.f}g F · ${m.cal} kcal</div>
+        </div>
+        <button onclick="useSavedMeal(${i},'${targetDate}')" style="font-size:11px;font-weight:700;color:var(--green);padding:5px 10px;border-radius:20px;background:var(--gd);white-space:nowrap;flex-shrink:0">+ Add</button>
+        <button onclick="deleteSavedMeal(${i},'${targetDate}')" style="color:var(--red);font-size:16px;padding:0 2px;flex-shrink:0">×</button>
+      </div>`).join('')}
+    </div>`;
+}
+function useSavedMeal(idx,dateStr){
+  const m=S.savedMeals[idx];if(!m)return;
+  const now=new Date();
+  const time=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
+  S.diet.unshift({id:Date.now(),date:dateStr,name:m.name,p:m.p,c:m.c,f:m.f,cal:m.cal,time,note:'saved meal'});
+  save();toast(`${m.name} added ✓`);
+  if(dateStr===today()){closeOverlay();renderDiet();}
+  else openEditDay(dateStr);
+}
+function deleteSavedMeal(idx,dateStr){
+  S.savedMeals.splice(idx,1);save();toast('Removed from saved meals');
+  if(dateStr===today())openAddMeal();
+  else openAddMealForDate(dateStr);
+}
+
 function openAddMealForDate(dateStr){
-  const now=new Date(dateStr);const t='12:00';
-  document.getElementById('sheetBody').innerHTML=`<div class="shTitle">Add Meal</div><div class="shSub">${fmtDate(dateStr)}</div>
+  const t='12:00';
+  document.getElementById('sheetBody').innerHTML=`
+    <div class="shTitle">Add Meal</div><div class="shSub">${fmtDate(dateStr)}</div>
+    ${savedMealsHTML(dateStr)}
+    <div class="lbl" style="margin-top:0">New Meal</div>
     <div class="field"><div class="fLbl">Meal name</div><input class="fInp" id="am-name" placeholder="e.g. Chicken + rice"></div>
     <div class="r3" style="margin-bottom:12px"><div><div class="fLbl">Protein (g)</div><input class="fInp" id="am-p" type="number" placeholder="0"></div><div><div class="fLbl">Carbs (g)</div><input class="fInp" id="am-c" type="number" placeholder="0"></div><div><div class="fLbl">Fat (g)</div><input class="fInp" id="am-f" type="number" placeholder="0"></div></div>
     <div class="r2" style="margin-bottom:12px"><div><div class="fLbl">Calories</div><input class="fInp" id="am-cal" type="number" placeholder="auto-calc"></div><div><div class="fLbl">Time</div><input class="fInp" id="am-time" value="${t}"></div></div>
-    <button class="saveBtn" onclick="saveMealForDate('${dateStr}')">ADD MEAL</button>`;
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <button class="saveBtn" style="flex:2" onclick="saveMealForDate('${dateStr}',false)">ADD MEAL</button>
+      <button class="saveBtn" style="flex:1;background:var(--blue)" onclick="saveMealForDate('${dateStr}',true)">ADD + SAVE</button>
+    </div>
+    <div style="font-size:11px;color:var(--t3);text-align:center;margin-top:6px">ADD + SAVE stores this meal for quick reuse</div>`;
 }
-function saveMealForDate(dateStr){
+function saveMealForDate(dateStr,andSave){
   const p=parseFloat(document.getElementById('am-p').value)||0;
   const c=parseFloat(document.getElementById('am-c').value)||0;
   const f=parseFloat(document.getElementById('am-f').value)||0;
   const cal=parseFloat(document.getElementById('am-cal').value)||Math.round(p*4+c*4+f*9);
-  S.diet.unshift({id:Date.now(),date:dateStr,name:document.getElementById('am-name').value||'Meal',p,c,f,cal,time:document.getElementById('am-time').value,note:''});
-  save();toast('Meal added ✓');openEditDay(dateStr);
+  const name=document.getElementById('am-name').value||'Meal';
+  S.diet.unshift({id:Date.now(),date:dateStr,name,p,c,f,cal,time:document.getElementById('am-time').value,note:''});
+  if(andSave&&!S.savedMeals.find(m=>m.name.toLowerCase()===name.toLowerCase())){
+    if(!S.savedMeals)S.savedMeals=[];
+    S.savedMeals.push({name,p,c,f,cal});
+    toast('Meal added + saved to library 📌');
+  } else {
+    toast('Meal added ✓');
+  }
+  save();openEditDay(dateStr);
 }
 function saveEditDay(dateStr){
   const bwVal=document.getElementById('ed-bw')?.value;
@@ -1526,6 +1679,7 @@ function importBackup(event){
       S.bodyWeight=mergeArr(S.bodyWeight,d.bodyWeight||[],'date');
       S.steps=mergeArr(S.steps,d.steps||[],'date');
       S.caffeine=mergeArr(S.caffeine,d.caffeine||[],'date');
+      S.savedMeals=d.savedMeals||S.savedMeals||[];
       S.skillLogs=d.skillLogs||S.skillLogs;
       S.skills=d.skills||S.skills;
       if(backup.program)PROG=backup.program;
