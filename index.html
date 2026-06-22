@@ -937,30 +937,61 @@ function removeMBI(idx){_mealBuilderItems.splice(idx,1);renderMealModal();}
 function openIngQty(ingId){
   const ing=S.ingredients.find(i=>i.id===ingId);if(!ing)return;
   const units=ing.units||['g'];
+
+  // Build friendly unit descriptions for the subtitle
+  const unitDesc=[];
+  if(ing.each) unitDesc.push('1 each = '+ing.each+'g');
+  if(ing.cup) unitDesc.push('1 cup = '+ing.cup+'g');
+  if(ing.tbsp) unitDesc.push('1 tbsp = '+ing.tbsp+'g');
+  if(ing.serving) unitDesc.push('1 serving = '+ing.serving+'g');
+  if(ing.slice) unitDesc.push('1 slice = '+ing.slice+'g');
+  if(ing.scoop) unitDesc.push('1 scoop = '+ing.scoop+'g');
+  const sub=unitDesc.length?unitDesc.join(' · '):'Per 100g: '+ing.per100.p+'g P · '+ing.per100.c+'g C · '+ing.per100.f+'g F · '+ing.per100.cal+' kcal';
+
   document.getElementById('sheetBody').innerHTML=
     '<div class="shTitle">'+ing.name+'</div>'
-    +'<div class="shSub">'+ing.per100.p+'g P · '+ing.per100.c+'g C · '+ing.per100.f+'g F · '+ing.per100.cal+' kcal per 100g</div>'
-    +'<div class="lbl" style="margin-top:0">Quantity</div>'
-    +'<div style="display:flex;gap:8px;margin-bottom:12px"><input class="fInp" id="iq-qty" type="number" inputmode="decimal" placeholder="100" style="flex:2"><select class="fInp" id="iq-unit" style="flex:1">'+units.map(u=>'<option value="'+u+'">'+u+'</option>').join('')+'</select></div>'
-    +'<div id="iq-preview" style="background:var(--bg3);border-radius:var(--rsm);padding:10px 12px;font-family:var(--fm);font-size:12px;color:var(--t2);margin-bottom:14px">Enter a quantity to preview</div>'
+    +'<div class="shSub">'+sub+'</div>'
+    +'<div style="background:var(--bg3);border-radius:var(--rsm);padding:8px 12px;margin-bottom:12px;font-family:var(--fm);font-size:11px;color:var(--t3)">Per 100g: '+ing.per100.p+'g P · '+ing.per100.c+'g C · '+ing.per100.f+'g F · '+ing.per100.cal+' kcal</div>'
+    +'<div class="lbl" style="margin-top:0">How much did you have?</div>'
+    +'<div style="display:flex;gap:8px;margin-bottom:12px">'
+    +'<input class="fInp" id="iq-qty" type="number" inputmode="decimal" placeholder="e.g. 2" style="flex:2">'
+    +'<select class="fInp" id="iq-unit" style="flex:1">'+units.map(u=>{
+      const labels={g:'g',oz:'oz',cup:'cup',tbsp:'tbsp',each:'each',slice:'slice',scoop:'scoop',serving:'serving'};
+      return'<option value="'+u+'">'+( labels[u]||u)+'</option>';
+    }).join('')+'</select>'
+    +'</div>'
+    +'<div id="iq-preview" style="background:var(--gd);border-radius:var(--rsm);padding:10px 12px;font-size:13px;color:var(--t2);margin-bottom:14px;min-height:42px">Enter a quantity above to preview macros</div>'
     +'<button class="saveBtn" onclick="addIngToBuilder(\''+ingId+'\')">Add to Meal</button>'
     +'<button onclick="renderMealModal()" style="width:100%;padding:10px;font-size:13px;color:var(--t2);margin-top:8px">← Back</button>';
   document.getElementById('iq-qty').addEventListener('input',()=>updateIngPreview(ingId));
   document.getElementById('iq-unit').addEventListener('change',()=>updateIngPreview(ingId));
+  setTimeout(()=>document.getElementById('iq-qty')?.focus(),200);
 }
 function updateIngPreview(ingId){
   const ing=S.ingredients.find(i=>i.id===ingId);if(!ing)return;
   const qty=parseFloat(document.getElementById('iq-qty').value)||0;
   const unit=document.getElementById('iq-unit').value;
+  if(!qty){document.getElementById('iq-preview').innerHTML='Enter a quantity above to preview macros';return;}
   const g=toGrams(qty,unit,ing);const f=g/100;
-  const p=Math.round(ing.per100.p*f*10)/10;const c=Math.round(ing.per100.c*f*10)/10;const ft=Math.round(ing.per100.f*f*10)/10;const cal=Math.round(ing.per100.cal*f);
-  document.getElementById('iq-preview').innerHTML=qty+unit+' = '+g+'g → <span style="color:var(--t1)">'+p+'g P · '+c+'g C · '+ft+'g F · '+cal+' kcal</span>';
+  const p=Math.round(ing.per100.p*f*10)/10;
+  const c=Math.round(ing.per100.c*f*10)/10;
+  const ft=Math.round(ing.per100.f*f*10)/10;
+  const cal=Math.round(ing.per100.cal*f);
+  const unitLabel=qty===1?unit:(unit==='each'?'each':unit+'s');
+  document.getElementById('iq-preview').innerHTML=
+    '<div style="font-weight:700;color:var(--green);margin-bottom:4px">'+qty+' '+unitLabel+' = '+g+'g</div>'
+    +'<div style="font-family:var(--fm);font-size:13px;color:var(--t1)">'+p+'g protein · '+c+'g carbs · '+ft+'g fat · '+cal+' kcal</div>';
 }
 function toGrams(qty,unit,ing){
-  if(unit==='g')return qty;if(unit==='oz')return Math.round(qty*28.35);
-  if(unit==='cup')return Math.round(qty*(ing.cup||240));if(unit==='tbsp')return Math.round(qty*(ing.tbsp||15));
-  if(unit==='each')return Math.round(qty*(ing.each||100));if(unit==='slice')return Math.round(qty*(ing.slice||28));
-  if(unit==='scoop')return Math.round(qty*(ing.scoop||30));return qty;
+  if(unit==='g')return qty;
+  if(unit==='oz')return Math.round(qty*28.35);
+  if(unit==='cup')return Math.round(qty*(ing.cup||240));
+  if(unit==='tbsp')return Math.round(qty*(ing.tbsp||15));
+  if(unit==='each')return Math.round(qty*(ing.each||100));
+  if(unit==='slice')return Math.round(qty*(ing.slice||28));
+  if(unit==='scoop')return Math.round(qty*(ing.scoop||30));
+  if(unit==='serving')return Math.round(qty*(ing.serving||100));
+  return qty;
 }
 function addIngToBuilder(ingId){
   const ing=S.ingredients.find(i=>i.id===ingId);if(!ing)return;
@@ -1016,48 +1047,74 @@ function renderIngManager(){
   document.getElementById('sheetBody').innerHTML=h;
 }
 function openAddIngredient(){
-  _ingSelUnits=['g'];_ingUnitSizes={};
   document.getElementById('sheetBody').innerHTML=
     '<div class="shTitle">Add Ingredient</div>'
-    +'<div class="field"><div class="fLbl">Name</div><input class="fInp" id="ai-name" placeholder="e.g. Chicken Thigh"></div>'
-    +'<div class="lbl">Per 100g</div>'
-    +'<div class="r3" style="margin-bottom:12px"><div><div class="fLbl">Protein (g)</div><input class="fInp" id="ai-p" type="number" placeholder="0"></div><div><div class="fLbl">Carbs (g)</div><input class="fInp" id="ai-c" type="number" placeholder="0"></div><div><div class="fLbl">Fat (g)</div><input class="fInp" id="ai-f" type="number" placeholder="0"></div></div>'
-    +'<div class="field"><div class="fLbl">Calories per 100g (or auto-calc)</div><input class="fInp" id="ai-cal" type="number" placeholder="auto from macros"></div>'
-    +'<div class="lbl">Units available</div>'
-    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+['g','oz','cup','tbsp','each','slice','scoop'].map(u=>'<button id="aiu-'+u+'" onclick="togIngUnit(\''+u+'\')" class="chip'+(u==='g'?' on':'')+'">'+u+'</button>').join('')+'</div>'
-    +'<div id="ing-unit-extras"></div>'
+    +'<div class="shSub">Fill in what you know — leave the rest blank</div>'
+    +'<div class="field"><div class="fLbl">Food name</div><input class="fInp" id="ai-name" placeholder="e.g. Chicken Breast"></div>'
+    +'<div class="lbl" style="margin-top:0">Macros per 100g <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--t3)">(required — base for all calculations)</span></div>'
+    +'<div class="r3" style="margin-bottom:6px">'
+    +'<div><div class="fLbl">Protein (g)</div><input class="fInp" id="ai-p" type="number" placeholder="0"></div>'
+    +'<div><div class="fLbl">Carbs (g)</div><input class="fInp" id="ai-c" type="number" placeholder="0"></div>'
+    +'<div><div class="fLbl">Fat (g)</div><input class="fInp" id="ai-f" type="number" placeholder="0"></div>'
+    +'</div>'
+    +'<div class="field"><div class="fLbl">Calories per 100g <span style="font-weight:400;text-transform:none;color:var(--t3)">(or leave blank to auto-calc)</span></div><input class="fInp" id="ai-cal" type="number" placeholder="auto from macros"></div>'
+    +'<div class="lbl">Serving sizes <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--t3)">— how many grams is each unit?</span></div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">'
+    +[
+      {key:"each",   label:"1 each",    hint:"e.g. 50 for egg, 120 for banana"},
+      {key:"serving",label:"1 serving", hint:"e.g. 113 for chicken breast"},
+      {key:"cup",    label:"1 cup",     hint:"e.g. 240 liquids, 186 cooked rice"},
+      {key:"tbsp",   label:"1 tbsp",    hint:"e.g. 15 most liquids"},
+      {key:"oz",     label:"1 oz",      hint:"28 for most solids"},
+      {key:"slice",  label:"1 slice",   hint:"e.g. 28 for bread"},
+      {key:"scoop",  label:"1 scoop",   hint:"e.g. 30 protein powder"},
+    ].map(u=>'<div style="display:flex;align-items:center;gap:8px"><div style="font-size:12px;font-weight:600;color:var(--t2);min-width:70px">'+u.label+'</div><input class="fInp" id="ai-'+u.key+'" type="number" placeholder="'+u.hint+'" style="flex:1"><div style="font-size:11px;color:var(--t3);width:12px">g</div></div>').join('')
+    +'</div>'
     +'<button class="saveBtn" onclick="saveNewIngredient()">ADD INGREDIENT</button>'
     +'<button onclick="renderIngManager()" style="width:100%;padding:10px;font-size:13px;color:var(--t2);margin-top:8px">← Back</button>';
 }
-function togIngUnit(u){
-  if(!_ingSelUnits)_ingSelUnits=['g'];
-  const idx=_ingSelUnits.indexOf(u);
-  if(idx>=0&&u!=='g')_ingSelUnits.splice(idx,1);
-  else if(idx<0)_ingSelUnits.push(u);
-  document.getElementById('aiu-'+u)?.classList.toggle('on',_ingSelUnits.includes(u));
-  const nonG=_ingSelUnits.filter(x=>x!=='g');
-  const lbl={oz:'1 oz = ? g',cup:'1 cup = ? g',tbsp:'1 tbsp = ? g',each:'1 each = ? g',slice:'1 slice = ? g',scoop:'1 scoop = ? g'};
-  let h='';nonG.forEach(x=>{h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="font-size:12px;font-weight:600;width:100px">'+lbl[x]+'</div><input class="fInp" id="ius-'+x+'" type="number" placeholder="e.g. 240" style="flex:1"></div>';});
-  document.getElementById('ing-unit-extras').innerHTML=h;
-}
 function saveNewIngredient(){
   const name=document.getElementById('ai-name').value.trim();if(!name){toast('Enter a name');return;}
-  const p=parseFloat(document.getElementById('ai-p').value)||0;const c=parseFloat(document.getElementById('ai-c').value)||0;const f=parseFloat(document.getElementById('ai-f').value)||0;
+  const p=parseFloat(document.getElementById('ai-p').value)||0;
+  const c=parseFloat(document.getElementById('ai-c').value)||0;
+  const f=parseFloat(document.getElementById('ai-f').value)||0;
   const cal=parseFloat(document.getElementById('ai-cal').value)||Math.round(p*4+c*4+f*9);
-  const units=_ingSelUnits||['g'];
-  const sizes={};(units.filter(x=>x!=='g')).forEach(u=>{const v=document.getElementById('ius-'+u)?.value;if(v)sizes[u]=parseFloat(v);});
+  const sizes={};const units=['g','oz'];
+  ['each','serving','cup','tbsp','slice','scoop'].forEach(u=>{
+    const v=parseFloat(document.getElementById('ai-'+u)?.value);
+    if(v>0){sizes[u]=v;if(!units.includes(u))units.push(u);}
+  });
+  const ozV=parseFloat(document.getElementById('ai-oz')?.value);
+  if(ozV>0)sizes.oz=ozV;
   const id=name.toLowerCase().replace(/\s+/g,'_')+'_'+Date.now();
   S.ingredients.push({id,name,per100:{p,c,f,cal},units,...sizes});
   save();toast(name+' added ✓');renderIngManager();
 }
 function openEditIngredient(idx){
   const ing=S.ingredients[idx];
+  const unitRows=[
+    {key:'each',   label:'1 each'},
+    {key:'serving',label:'1 serving'},
+    {key:'cup',    label:'1 cup'},
+    {key:'tbsp',   label:'1 tbsp'},
+    {key:'oz',     label:'1 oz'},
+    {key:'slice',  label:'1 slice'},
+    {key:'scoop',  label:'1 scoop'},
+  ];
   document.getElementById('sheetBody').innerHTML=
     '<div class="shTitle">Edit Ingredient</div>'
     +'<div class="field"><div class="fLbl">Name</div><input class="fInp" id="ei-name" value="'+ing.name+'"></div>'
-    +'<div class="lbl">Per 100g</div>'
-    +'<div class="r3" style="margin-bottom:12px"><div><div class="fLbl">Protein</div><input class="fInp" id="ei-p" type="number" value="'+ing.per100.p+'"></div><div><div class="fLbl">Carbs</div><input class="fInp" id="ei-c" type="number" value="'+ing.per100.c+'"></div><div><div class="fLbl">Fat</div><input class="fInp" id="ei-f" type="number" value="'+ing.per100.f+'"></div></div>'
+    +'<div class="lbl" style="margin-top:0">Macros per 100g</div>'
+    +'<div class="r3" style="margin-bottom:12px">'
+    +'<div><div class="fLbl">Protein</div><input class="fInp" id="ei-p" type="number" value="'+ing.per100.p+'"></div>'
+    +'<div><div class="fLbl">Carbs</div><input class="fInp" id="ei-c" type="number" value="'+ing.per100.c+'"></div>'
+    +'<div><div class="fLbl">Fat</div><input class="fInp" id="ei-f" type="number" value="'+ing.per100.f+'"></div>'
+    +'</div>'
     +'<div class="field"><div class="fLbl">Calories per 100g</div><input class="fInp" id="ei-cal" type="number" value="'+ing.per100.cal+'"></div>'
+    +'<div class="lbl">Serving sizes (grams per unit)</div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">'
+    +unitRows.map(u=>'<div style="display:flex;align-items:center;gap:8px"><div style="font-size:12px;font-weight:600;color:var(--t2);min-width:70px">'+u.label+'</div><input class="fInp" id="ei-'+u.key+'" type="number" placeholder="— not set" value="'+(ing[u.key]||'')+'" style="flex:1"><div style="font-size:11px;color:var(--t3);width:12px">g</div></div>').join('')
+    +'</div>'
     +'<button class="saveBtn" onclick="saveEditIngredient('+idx+')">SAVE</button>'
     +'<button onclick="renderIngManager()" style="width:100%;padding:10px;font-size:13px;color:var(--t2);margin-top:8px">← Back</button>';
 }
@@ -1068,6 +1125,14 @@ function saveEditIngredient(idx){
   ing.per100.c=parseFloat(document.getElementById('ei-c').value)||0;
   ing.per100.f=parseFloat(document.getElementById('ei-f').value)||0;
   ing.per100.cal=parseFloat(document.getElementById('ei-cal').value)||Math.round(ing.per100.p*4+ing.per100.c*4+ing.per100.f*9);
+  // Update serving sizes and rebuild units array
+  const units=['g','oz'];
+  ['each','serving','cup','tbsp','oz','slice','scoop'].forEach(u=>{
+    const v=parseFloat(document.getElementById('ei-'+u)?.value);
+    if(v>0){ing[u]=v;if(!units.includes(u))units.push(u);}
+    else delete ing[u];
+  });
+  ing.units=units;
   save();toast('Updated ✓');renderIngManager();
 }
 function deleteIngredient(idx){S.ingredients.splice(idx,1);save();renderIngManager();toast('Removed');}
