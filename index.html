@@ -212,7 +212,7 @@ canvas{width:100% !important;display:block}
 .addExBtn{width:100%;padding:9px;border-radius:var(--rsm);background:var(--bd);border:1px dashed var(--blue);font-size:12px;font-weight:700;color:var(--blue);margin-top:8px;transition:all .12s}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;display:none;align-items:flex-end;backdrop-filter:blur(6px)}
 .overlay.on{display:flex}
-.sheet{width:100%;background:var(--bg2);border-radius:22px 22px 0 0;padding:16px 18px calc(var(--sab) + 22px);max-height:88vh;overflow-y:auto;animation:slideUp .28s var(--ease)}
+.sheet{width:100%;background:var(--bg2);border-radius:22px 22px 0 0;padding:16px 18px calc(var(--sab) + 22px);max-height:72vh;overflow-y:auto;animation:slideUp .28s var(--ease)}
 .sheet::-webkit-scrollbar{display:none}
 @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 .handle{width:36px;height:4px;background:var(--bg4);border-radius:2px;margin:0 auto 16px}
@@ -278,7 +278,10 @@ canvas{width:100% !important;display:block}
 </div>
 <div class="overlay" id="overlay" onclick="closeOverlay(event)">
   <div class="sheet" id="sheet" onclick="event.stopPropagation()">
-    <div class="handle"></div>
+    <div style="display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:16px">
+      <div class="handle" style="margin:0"></div>
+      <button onclick="closeOverlay()" style="position:absolute;right:0;top:-4px;width:28px;height:28px;border-radius:50%;background:var(--bg3);color:var(--t2);font-size:16px;display:flex;align-items:center;justify-content:center;line-height:1">×</button>
+    </div>
     <div id="sheetBody"></div>
   </div>
 </div>
@@ -550,7 +553,10 @@ function goScreen(name,title){
 }
 function navBack(){goScreen('home');}
 function openOverlay(){document.getElementById('overlay').classList.add('on');}
-function closeOverlay(e){if(e&&e.target!==document.getElementById('overlay'))return;document.getElementById('overlay').classList.remove('on');}
+function closeOverlay(e){
+  if(e&&e.target&&e.target!==document.getElementById('overlay'))return;
+  document.getElementById('overlay').classList.remove('on');
+}
 
 // ═══ HOME ═══
 function renderHome(){
@@ -604,36 +610,48 @@ function renderWeekBar(){
 function inferMovement(name){
   const n=name.toLowerCase();
   const rules=[
-    [/leg curl/,'Leg Curl'],[/leg extension/,'Leg Extension'],[/squat/,'Squat'],
+    [/leg curl/,'Leg Curl'],[/leg extension/,'Leg Extension'],[/squat|pendulum/,'Squat'],
     [/incline.*chest|incline.*press/,'Chest Press'],[/flat.*chest|flat.*press/,'Chest Press'],
     [/pec deck|chest fly|cable fly/,'Pec Deck'],[/shoulder press|overhead press/,'Shoulder Press'],
-    [/lat pulldown|pulldown/,'Lat Pulldown'],[/row/,'Row'],[/calf raise/,'Calf Raise'],
-    [/adductor/,'Adductor'],[/abductor/,'Abductor'],[/pull-up|pull up|pullup/,'Pull-Up'],
-    [/curl/,'Curl'],[/pushdown|extension.*tricep|tricep.*extension/,'Tricep'],[/face pull/,'Face Pull'],
+    [/lat pulldown|pulldown/,'Lat Pulldown'],[/seated row|machine row|single arm.*row/,'Row'],
+    [/calf raise/,'Calf Raise'],[/adductor/,'Adductor'],[/abductor/,'Abductor'],
+    [/pull-up|pull up|pullup/,'Pull-Up'],
+    [/curl/,'Curl'],[/pushdown|tricep.*extension/,'Tricep'],[/face pull/,'Face Pull'],
   ];
   for(const[re,mv] of rules) if(re.test(n)) return mv;
   return '';
 }
 function exMovement(ex){ return ex.movement || inferMovement(ex.name) || ''; }
 
+// Returns the pre-assigned default machine for a program exercise (stored on ex.defaultMachineId)
+function getDefaultMachineId(ex){
+  return ex.defaultMachineId || getLastMachineForEx(ex.id) || '';
+}
+
 function machinePickerHTML(exId,curId,movement){
-  let machines=S.machines;
+  let machines;
+  const universal=S.machines.filter(m=>['Free Weights','Bodyweight','Various'].includes(m.brand));
+
   if(movement){
     const filtered=S.machines.filter(m=>m.movement===movement);
-    // Always include Free Weights / Bodyweight / Various as universal fallback options
-    const universal=S.machines.filter(m=>['Free Weights','Bodyweight','Various'].includes(m.brand)&&m.movement!==movement);
-    machines=filtered.length?[...filtered,...universal]:S.machines;
+    machines=filtered.length?[...filtered,...universal.filter(u=>!filtered.includes(u))]:universal;
+  } else {
+    // No movement — show only universal equipment, not the full list
+    machines=universal;
   }
-  let h='<div class="machSel"><div class="machSelLbl">Equipment used'+(movement&&machines.length<S.machines.length?' · '+movement:'')+'</div><div class="machChips">';
-  machines.slice(0,16).forEach(m=>{
+
+  const showing=machines.length;
+  let h='<div class="machSel">'
+    +'<div class="machSelLbl">Equipment used'+(movement?' · '+movement:'')+'</div>'
+    +'<div class="machChips">';
+  machines.forEach(m=>{
     const label=(m.brand!=='Free Weights'&&m.brand!=='Bodyweight'&&m.brand!=='Various'?m.brand+' ':'')+m.name;
     h+='<button class="machChip'+(curId===m.id?' on':'')+'" onclick="pickMachine(\''+exId+'\',\''+m.id+'\')">'+label+'</button>';
   });
   h+='<button class="machChip'+(curId==='other'?' on':'')+'" onclick="pickMachine(\''+exId+'\',\'other\')">Other…</button>';
   h+='</div>';
-  if(movement&&machines.length<S.machines.length){
-    h+='<button style="font-size:10px;color:var(--blue);font-weight:600;padding:4px 0;margin-top:4px" onclick="showAllMachines(\''+exId+'\')">Show all equipment ('+S.machines.length+')</button>';
-  }
+  // Always offer escape hatch to see full list
+  h+='<button style="font-size:10px;color:var(--blue);font-weight:600;padding:4px 0;margin-top:4px" onclick="showAllMachines(\''+exId+'\')">Show all ('+S.machines.length+')</button>';
   if(curId==='other'){
     h+='<input style="width:100%;margin-top:6px;padding:6px 10px;border-radius:20px;background:var(--bg2);border:1px solid var(--teal);color:var(--t1);font-size:12px;outline:none;font-family:var(--fb)" id="mc-other-'+exId+'" placeholder="Type machine name..." value="'+(WS[exId]?.machineCustom||'')+'" oninput="WS[\''+exId+'\'].machineCustom=this.value;saveDraft()">';
   }
@@ -642,7 +660,8 @@ function machinePickerHTML(exId,curId,movement){
 }
 function showAllMachines(exId){
   const mp=document.getElementById('mp-'+exId);
-  if(mp)mp.innerHTML=machinePickerHTML(exId,WS[exId]?.machineId,null);
+  if(mp)mp.innerHTML=machinePickerHTML(exId,WS[exId]?.machineId,null)+
+    '<button style="font-size:10px;color:var(--t3);font-weight:600;padding:4px 0;margin-top:2px" onclick="pickMachine(\''+exId+'\',WS[\''+exId+'\'].machineId)">← Back to filtered</button>';
 }
 function pickMachine(exId,machineId){
   if(!WS[exId])return;
@@ -662,7 +681,7 @@ function openWorkout(dayId){
   const draft=loadDraft();
   const initWS=(ex)=>{
     const last=getLastSession(ex.id);
-    const lastMachineId=getLastMachineForEx(ex.id)||'';
+    const lastMachineId=getDefaultMachineId(ex);
     return{sets:Array.from({length:ex.sets},(_,i)=>({weight:last?.sets[i]?.weight||'',reps:last?.sets[i]?.reps||'',done:false})),rpe:null,note:'',machineId:lastMachineId,machineCustom:'',movement:exMovement(ex)};
   };
   if(draft&&draft.dayId===dayId){
@@ -893,8 +912,8 @@ function openMealModal(dateStr){
 function renderMealModal(){
   const now=new Date();const t=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});
   const q=_mealSearch.toLowerCase();
-  const fIng=S.ingredients.filter(i=>i.name.toLowerCase().includes(q)).slice(0,25);
-  const fSaved=S.savedMeals.filter(m=>m.name.toLowerCase().includes(q));
+  const fIng=[...S.ingredients].sort((a,b)=>a.name.localeCompare(b.name)).filter(i=>i.name.toLowerCase().includes(q)).slice(0,30);
+  const fSaved=[...S.savedMeals].sort((a,b)=>a.name.localeCompare(b.name)).filter(m=>m.name.toLowerCase().includes(q));
   const tot=_mealBuilderItems.reduce((a,item)=>({p:a.p+item.n.p,c:a.c+item.n.c,f:a.f+item.n.f,cal:a.cal+item.n.cal}),{p:0,c:0,f:0,cal:0});
   let h='<div class="shTitle">Log a Meal</div>';
   h+='<div class="mealSrch"><svg class="mealSrchIco" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="mealSrchInp" id="msInp" placeholder="Search ingredients or saved meals..." value="'+_mealSearch+'" oninput="updateMealSearch(this.value)"></div>';
@@ -1034,14 +1053,22 @@ function deleteSavedMeal(idx){S.savedMeals.splice(idx,1);save();toast('Removed')
 // ═══ INGREDIENT MANAGER ═══
 function openIngredientManager(){renderIngManager();openOverlay();}
 function renderIngManager(){
-  let h='<div class="shTitle">Ingredients</div><div class="shSub">'+S.ingredients.length+' items</div>';
+  const sorted=[...S.ingredients].sort((a,b)=>a.name.localeCompare(b.name));
+  let h='<div class="shTitle">Ingredients</div><div class="shSub">'+S.ingredients.length+' items · A–Z</div>';
   h+='<button onclick="openAddIngredient()" style="width:100%;padding:10px;border-radius:var(--rsm);background:var(--gd);border:1px dashed var(--green);font-size:13px;font-weight:700;color:var(--green);margin-bottom:12px">+ Add Ingredient</button>';
   h+='<div style="display:flex;flex-direction:column;gap:4px">';
-  S.ingredients.forEach((ing,i)=>{
+  sorted.forEach((ing)=>{
+    const idx=S.ingredients.indexOf(ing);
+    const unitList=ing.units?.filter(u=>u!=='g'&&u!=='oz').map(u=>{
+      const val=ing[u];return val?u+' = '+val+'g':'';
+    }).filter(Boolean).join(' · ');
     h+='<div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border-radius:var(--rsm);padding:9px 12px">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+ing.name+'</div><div style="font-family:var(--fm);font-size:10px;color:var(--t2);margin-top:1px">'+ing.per100.p+'P / '+ing.per100.c+'C / '+ing.per100.f+'F / '+ing.per100.cal+'cal per 100g</div></div>'
-      +'<button onclick="openEditIngredient('+i+')" style="font-size:12px;color:var(--blue);padding:4px 8px;border-radius:20px;background:var(--bd)">Edit</button>'
-      +'<button onclick="deleteIngredient('+i+')" style="color:var(--red);font-size:16px;padding:0 2px">×</button></div>';
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+ing.name+'</div>'
+      +'<div style="font-family:var(--fm);font-size:10px;color:var(--t2);margin-top:1px">'+ing.per100.p+'P / '+ing.per100.c+'C / '+ing.per100.f+'F / '+ing.per100.cal+'cal per 100g</div>'
+      +(unitList?'<div style="font-size:10px;color:var(--teal);margin-top:1px">'+unitList+'</div>':'')
+      +'</div>'
+      +'<button onclick="openEditIngredient('+idx+')" style="font-size:12px;color:var(--blue);padding:4px 8px;border-radius:20px;background:var(--bd)">Edit</button>'
+      +'<button onclick="deleteIngredient('+idx+')" style="color:var(--red);font-size:16px;padding:0 2px">×</button></div>';
   });
   h+='</div>';
   document.getElementById('sheetBody').innerHTML=h;
@@ -1139,11 +1166,13 @@ function deleteIngredient(idx){S.ingredients.splice(idx,1);save();renderIngManag
 
 // ═══ SAVED MEALS MANAGER ═══
 function openSavedMealsManager(){
-  let h='<div class="shTitle">Saved Meals</div><div class="shSub">Tap Add to log quickly on any day</div>';
+  const sorted=[...S.savedMeals].sort((a,b)=>a.name.localeCompare(b.name));
+  let h='<div class="shTitle">Saved Meals</div><div class="shSub">Tap Add to log quickly · A–Z</div>';
   if(!S.savedMeals.length){h+='<div class="empty"><div class="emIco">⭐</div><div class="emT">No saved meals yet</div><div class="emS">Log a meal with LOG + SAVE to store it here.</div></div>';}
   else{
     h+='<div style="display:flex;flex-direction:column;gap:6px">';
-    S.savedMeals.forEach((m,i)=>{
+    sorted.forEach((m)=>{
+      const i=S.savedMeals.indexOf(m);
       h+='<div style="background:var(--bg3);border-radius:var(--rsm);padding:10px 12px">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><div style="font-size:13px;font-weight:600">'+m.name+'</div><button onclick="delSavedMealMgr('+i+')" style="color:var(--red);font-size:16px;padding:0 2px">×</button></div>'
         +'<div style="font-family:var(--fm);font-size:11px;color:var(--t2);margin-bottom:8px">'+m.p+'g P · '+m.c+'g C · '+m.f+'g F · '+m.cal+' kcal</div>'
@@ -1159,7 +1188,10 @@ function delSavedMealMgr(idx){S.savedMeals.splice(idx,1);save();openSavedMealsMa
 
 // ═══ MACHINE MANAGER ═══
 function openMachineManager(){
-  const byBrand={};S.machines.forEach((m,i)=>{if(!byBrand[m.brand])byBrand[m.brand]=[];byBrand[m.brand].push({...m,_i:i});});
+  const byBrand={};[...S.machines].sort((a,b)=>a.name.localeCompare(b.name)).forEach((m)=>{
+    const i=S.machines.indexOf(m);
+    if(!byBrand[m.brand])byBrand[m.brand]=[];byBrand[m.brand].push({...m,_i:i});
+  });
   let h='<div class="shTitle">Equipment Library</div><div class="shSub">'+S.machines.length+' machines · grouped by brand</div>';
   h+='<button onclick="openAddMachine()" style="width:100%;padding:10px;border-radius:var(--rsm);background:var(--gd);border:1px dashed var(--green);font-size:13px;font-weight:700;color:var(--green);margin-bottom:12px">+ Add Machine</button>';
   Object.entries(byBrand).forEach(([brand,machines])=>{
@@ -1466,19 +1498,41 @@ function saveNewEx(dayId,blockId){
 function editEx(dayId,blockId,exId){
   const day=PROG.days.find(d=>d.id===dayId);const block=day?.blocks.find(b=>b.id===blockId);const ex=block?.exercises.find(e=>e.id===exId);if(!ex)return;
   const curMv=ex.movement||exMovement(ex)||'Other';
+  const curDefaultMachine=ex.defaultMachineId||'';
+  // Filter machines by current movement for the default picker
+  const mv=curMv==='Other'?'':curMv;
+  const filteredMachines=mv?S.machines.filter(m=>m.movement===mv||['Free Weights','Bodyweight','Various'].includes(m.brand)):S.machines.filter(m=>['Free Weights','Bodyweight','Various'].includes(m.brand));
+  const machineOptions='<option value="">— None / decide each session —</option>'+filteredMachines.map(m=>'<option value="'+m.id+'"'+(m.id===curDefaultMachine?' selected':'')+'>'+m.brand+' '+m.name+'</option>').join('');
   document.getElementById('sheetBody').innerHTML='<div class="shTitle">Edit Exercise</div>'
     +'<div class="field"><div class="fLbl">Name</div><input class="fInp" id="ee-name" value="'+ex.name+'"></div>'
-    +'<div class="field"><div class="fLbl">Movement type (filters equipment choices)</div><select class="fInp" id="ee-movement">'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'"'+(m===curMv?' selected':'')+'>'+m+'</option>').join('')+'</select></div>'
+    +'<div class="field"><div class="fLbl">Movement type</div><select class="fInp" id="ee-movement" onchange="refreshDefaultMachines(\''+dayId+'\',\''+blockId+'\',\''+exId+'\')">'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'"'+(m===curMv?' selected':'')+'>'+m+'</option>').join('')+'</select></div>'
+    +'<div class="field"><div class="fLbl">Default machine <span style="font-weight:400;text-transform:none;color:var(--t3)">— pre-selects in workout</span></div><select class="fInp" id="ee-defmachine">'+machineOptions+'</select></div>'
     +'<div class="r2" style="margin-bottom:12px"><div><div class="fLbl">Sets × Reps</div><input class="fInp" id="ee-rx" value="'+ex.rx+'"></div><div><div class="fLbl">Default Sets</div><input class="fInp" id="ee-sets" type="number" value="'+ex.sets+'"></div></div>'
     +'<div class="r2" style="margin-bottom:12px"><div><div class="fLbl">RPE</div><input class="fInp" id="ee-rpe" value="'+ex.rpe+'"></div><div><div class="fLbl">Rest</div><input class="fInp" id="ee-rest" value="'+ex.rest+'"></div></div>'
     +'<div class="field"><div class="fLbl">Muscle</div><input class="fInp" id="ee-muscle" value="'+ex.muscle+'"></div>'
     +'<div class="field"><div class="fLbl">Note</div><textarea class="fInp" id="ee-note" rows="2">'+ex.note+'</textarea></div>'
     +'<button class="saveBtn" onclick="saveEditEx(\''+dayId+'\',\''+blockId+'\',\''+exId+'\')">SAVE</button>';
 }
+// Refresh the default machine dropdown when movement type changes
+function refreshDefaultMachines(dayId,blockId,exId){
+  const mv=document.getElementById('ee-movement')?.value;
+  const sel=document.getElementById('ee-defmachine');if(!sel)return;
+  const filteredMachines=mv&&mv!=='Other'?S.machines.filter(m=>m.movement===mv||['Free Weights','Bodyweight','Various'].includes(m.brand)):S.machines.filter(m=>['Free Weights','Bodyweight','Various'].includes(m.brand));
+  sel.innerHTML='<option value="">— None / decide each session —</option>'+filteredMachines.map(m=>'<option value="'+m.id+'">'+m.brand+' '+m.name+'</option>').join('');
+}
 function saveEditEx(dayId,blockId,exId){
   const day=PROG.days.find(d=>d.id===dayId);const block=day?.blocks.find(b=>b.id===blockId);const ex=block?.exercises.find(e=>e.id===exId);if(!ex)return;
   const movement=document.getElementById('ee-movement').value;
-  ex.name=document.getElementById('ee-name').value;ex.rx=document.getElementById('ee-rx').value;ex.sets=parseInt(document.getElementById('ee-sets').value)||3;ex.rpe=document.getElementById('ee-rpe').value;ex.rest=document.getElementById('ee-rest').value;ex.muscle=document.getElementById('ee-muscle').value;ex.note=document.getElementById('ee-note').value;ex.movement=movement==='Other'?'':movement;
+  const defMachine=document.getElementById('ee-defmachine')?.value||'';
+  ex.name=document.getElementById('ee-name').value;
+  ex.rx=document.getElementById('ee-rx').value;
+  ex.sets=parseInt(document.getElementById('ee-sets').value)||3;
+  ex.rpe=document.getElementById('ee-rpe').value;
+  ex.rest=document.getElementById('ee-rest').value;
+  ex.muscle=document.getElementById('ee-muscle').value;
+  ex.note=document.getElementById('ee-note').value;
+  ex.movement=movement==='Other'?'':movement;
+  ex.defaultMachineId=defMachine;
   saveProg();closeOverlay();toast('Updated ✓');renderHome();
 }
 function removeEx(dayId,blockId,exId){const day=PROG.days.find(d=>d.id===dayId);const block=day?.blocks.find(b=>b.id===blockId);if(!block)return;block.exercises=block.exercises.filter(e=>e.id!==exId);saveProg();closeOverlay();toast('Removed');renderHome();}
@@ -1604,10 +1658,10 @@ function openExerciseCatalog(){
 }
 function renderExerciseCatalog(){
   const byMovement={};
-  (S.exerciseCatalog||[]).forEach((ex,i)=>{
+  [...(S.exerciseCatalog||[])].sort((a,b)=>a.name.localeCompare(b.name)).forEach((ex,i)=>{
     const mv=ex.movement||'Other';
     if(!byMovement[mv])byMovement[mv]=[];
-    byMovement[mv].push({...ex,_i:i});
+    byMovement[mv].push({...ex,_i:S.exerciseCatalog.indexOf(ex)});
   });
   let h='<div class="shTitle">Exercise Catalog</div><div class="shSub">'+(S.exerciseCatalog?.length||0)+' exercises · pick from here when editing your program</div>';
   h+='<button onclick="openAddCatalogEx()" style="width:100%;padding:10px;border-radius:var(--rsm);background:var(--gd);border:1px dashed var(--green);font-size:13px;font-weight:700;color:var(--green);margin-bottom:12px">+ Add Exercise</button>';
@@ -1632,11 +1686,19 @@ function renderExerciseCatalog(){
   }
   document.getElementById('sheetBody').innerHTML=h;
 }
+function catalogMachineOptions(movement,curId){
+  const mv=movement&&movement!=='Other'?movement:'';
+  const filtered=mv?S.machines.filter(m=>m.movement===mv):[];
+  const universal=S.machines.filter(m=>['Free Weights','Bodyweight','Various'].includes(m.brand));
+  const list=filtered.length?[...filtered,...universal.filter(u=>!filtered.includes(u))]:universal;
+  return'<option value="">— None / decide each session —</option>'+list.map(m=>'<option value="'+m.id+'"'+(m.id===curId?' selected':'')+'>'+m.brand+' '+m.name+'</option>').join('');
+}
 function openAddCatalogEx(){
   document.getElementById('sheetBody').innerHTML=
     '<div class="shTitle">Add to Catalog</div>'
     +'<div class="field"><div class="fLbl">Exercise Name</div><input class="fInp" id="cex-name" placeholder="e.g. Hammer Strength Leg Curl"></div>'
-    +'<div class="field"><div class="fLbl">Movement type</div><select class="fInp" id="cex-movement"><option value="">— Select —</option>'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'">'+m+'</option>').join('')+'</select></div>'
+    +'<div class="field"><div class="fLbl">Movement type</div><select class="fInp" id="cex-movement" onchange="refreshCatalogMachines()"><option value="">— Select —</option>'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'">'+m+'</option>').join('')+'</select></div>'
+    +'<div class="field"><div class="fLbl">Default machine <span style="font-weight:400;text-transform:none;color:var(--t3)">— pre-selects in workout</span></div><select class="fInp" id="cex-defmachine">'+catalogMachineOptions('','')+'</select></div>'
     +'<div class="r2" style="margin-bottom:12px"><div><div class="fLbl">Sets × Reps</div><input class="fInp" id="cex-rx" placeholder="3 × 10-12"></div><div><div class="fLbl">Default Sets</div><input class="fInp" id="cex-sets" type="number" placeholder="3"></div></div>'
     +'<div class="r2" style="margin-bottom:12px"><div><div class="fLbl">RPE</div><input class="fInp" id="cex-rpe" placeholder="RPE 8"></div><div><div class="fLbl">Rest</div><input class="fInp" id="cex-rest" placeholder="90 sec"></div></div>'
     +'<div class="field"><div class="fLbl">Muscle</div><input class="fInp" id="cex-muscle" placeholder="e.g. Hamstrings — stretch"></div>'
@@ -1644,15 +1706,21 @@ function openAddCatalogEx(){
     +'<button class="saveBtn" onclick="saveAddCatalogEx()">ADD TO CATALOG</button>'
     +'<button onclick="renderExerciseCatalog()" style="width:100%;padding:10px;font-size:13px;color:var(--t2);margin-top:8px">← Back</button>';
 }
+function refreshCatalogMachines(){
+  const mv=document.getElementById('cex-movement')?.value;
+  const sel=document.getElementById('cex-defmachine');
+  if(sel)sel.innerHTML=catalogMachineOptions(mv,'');
+}
 function saveAddCatalogEx(){
   const name=document.getElementById('cex-name').value.trim();
   if(!name){toast('Enter a name');return;}
   if(!S.exerciseCatalog)S.exerciseCatalog=[];
   const movement=document.getElementById('cex-movement').value;
+  const defMachine=document.getElementById('cex-defmachine')?.value||'';
   S.exerciseCatalog.push({
     id:name.toLowerCase().replace(/\s+/g,'_')+'_'+Date.now(),
-    name,
-    movement:movement||'',
+    name,movement:movement||'',
+    defaultMachineId:defMachine,
     rx:document.getElementById('cex-rx').value||'3 × 10-12',
     rpe:document.getElementById('cex-rpe').value||'RPE 8',
     rest:document.getElementById('cex-rest').value||'90 sec',
@@ -1668,7 +1736,8 @@ function openEditCatalogEx(idx){
   document.getElementById('sheetBody').innerHTML=
     '<div class="shTitle">Edit Exercise</div>'
     +'<div class="field"><div class="fLbl">Name</div><input class="fInp" id="cex-name" value="'+ex.name+'"></div>'
-    +'<div class="field"><div class="fLbl">Movement type</div><select class="fInp" id="cex-movement"><option value="">— Select —</option>'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'"'+(m===curMv?' selected':'')+'>'+m+'</option>').join('')+'</select></div>'
+    +'<div class="field"><div class="fLbl">Movement type</div><select class="fInp" id="cex-movement" onchange="refreshCatalogMachines()"><option value="">— Select —</option>'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'"'+(m===curMv?' selected':'')+'>'+m+'</option>').join('')+'</select></div>'
+    +'<div class="field"><div class="fLbl">Default machine</div><select class="fInp" id="cex-defmachine">'+catalogMachineOptions(curMv,ex.defaultMachineId||'')+'</select></div>'
     +'<div class="r2" style="margin-bottom:12px"><div><div class="fLbl">Sets × Reps</div><input class="fInp" id="cex-rx" value="'+ex.rx+'"></div><div><div class="fLbl">Default Sets</div><input class="fInp" id="cex-sets" type="number" value="'+ex.sets+'"></div></div>'
     +'<div class="r2" style="margin-bottom:12px"><div><div class="fLbl">RPE</div><input class="fInp" id="cex-rpe" value="'+ex.rpe+'"></div><div><div class="fLbl">Rest</div><input class="fInp" id="cex-rest" value="'+ex.rest+'"></div></div>'
     +'<div class="field"><div class="fLbl">Muscle</div><input class="fInp" id="cex-muscle" value="'+ex.muscle+'"></div>'
@@ -1680,6 +1749,7 @@ function saveEditCatalogEx(idx){
   const ex=S.exerciseCatalog[idx];if(!ex)return;
   ex.name=document.getElementById('cex-name').value||ex.name;
   ex.movement=document.getElementById('cex-movement').value||'';
+  ex.defaultMachineId=document.getElementById('cex-defmachine')?.value||'';
   ex.rx=document.getElementById('cex-rx').value||ex.rx;
   ex.sets=parseInt(document.getElementById('cex-sets').value)||ex.sets;
   ex.rpe=document.getElementById('cex-rpe').value||ex.rpe;
