@@ -464,6 +464,7 @@ let WS={};
 let CUR_DAY=null;
 let SEL_LIFT=null;
 let SEL_METRIC='max';
+let SEL_MACHINE=null; // null = all machines combined, machineId string = filter to one
 let _draftTimer=null;
 let _mealBuilderItems=[];
 let _mealTab='ingredients';
@@ -937,7 +938,10 @@ function renderMealModal(){
   }else if(_mealTab==='saved'){
     if(fSaved.length){
       h+='<div style="display:flex;flex-direction:column;gap:5px">';
-      fSaved.forEach((m,i)=>{h+='<div class="mealItem"><div style="flex:1"><div class="mealItemName">'+m.name+'</div><div class="mealItemMacros">'+m.p+'g P · '+m.c+'g C · '+m.f+'g F · '+m.cal+' kcal</div></div><button onclick="useSavedMeal('+i+',\''+_mealTargetDate+'\')" style="color:var(--green);font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px;background:var(--gd)">Add</button><button onclick="deleteSavedMeal('+i+')" style="color:var(--red);font-size:16px;padding:0 4px">×</button></div>';});
+      fSaved.forEach((m)=>{
+        const realIdx=S.savedMeals.indexOf(m);
+        h+='<div class="mealItem"><div style="flex:1"><div class="mealItemName">'+m.name+'</div><div class="mealItemMacros">'+m.p+'g P · '+m.c+'g C · '+m.f+'g F · '+m.cal+' kcal</div></div><button onclick="useSavedMeal('+realIdx+',\''+_mealTargetDate+'\')" style="color:var(--green);font-size:12px;font-weight:700;padding:5px 10px;border-radius:20px;background:var(--gd)">Add</button><button onclick="deleteSavedMeal('+realIdx+')" style="color:var(--red);font-size:16px;padding:0 4px">×</button></div>';
+      });
       h+='</div>';
     }else{h+='<div style="text-align:center;padding:20px;font-size:13px;color:var(--t3)">No saved meals yet. Use LOG + SAVE to store meals.</div>';}
   }else{
@@ -1207,11 +1211,17 @@ function openMachineManager(){
   document.getElementById('sheetBody').innerHTML=h;openOverlay();
 }
 function openAddMachine(){
+  const brandChips=['Hammer Strength','Hoist','Star Trac','Life Fitness','Matrix','Free Weights','Bodyweight','Various']
+    .map(b=>'<button onclick="document.getElementById(\'am-brand\').value=\''+b+'\'" style="font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px;border:1px solid var(--bdr);background:var(--bg3);color:var(--t2)">'+b+'</button>').join('');
   document.getElementById('sheetBody').innerHTML=
     '<div class="shTitle">Add Equipment</div>'
     +'<div class="field"><div class="fLbl">Name</div><input class="fInp" id="am-name" placeholder="e.g. Seated Leg Curl"></div>'
-    +'<div class="field"><div class="fLbl">Brand</div><input class="fInp" id="am-brand" placeholder="e.g. Hammer Strength"></div>'
-    +'<div class="field"><div class="fLbl">Movement type (controls which exercises this appears for)</div>'
+    +'<div class="fLbl">Brand — tap to fill or type your own</div>'
+    +'<div style="display:flex;gap:5px;flex-wrap:wrap;margin:6px 0 6px">'+brandChips+'</div>'
+    +'<input class="fInp" id="am-brand" placeholder="Brand name..." style="margin-bottom:8px">'
+    +'<div style="background:var(--bd);border-radius:var(--rsm);padding:8px 10px;margin-bottom:12px;font-size:12px;color:var(--blue);line-height:1.5">'
+    +'<strong>Free Weights, Bodyweight, Various</strong> — these three brands appear on every exercise regardless of movement type, so use them for dumbbells, pull-up bars, cable stations, etc.</div>'
+    +'<div class="field"><div class="fLbl">Movement type</div>'
     +'<select class="fInp" id="am-movement"><option value="">— Select movement —</option>'+MOVEMENT_TYPES.map(m=>'<option value="'+m+'">'+m+'</option>').join('')+'</select></div>'
     +'<div class="field"><div class="fLbl">Notes (optional)</div><input class="fInp" id="am-notes" placeholder="e.g. Standing, prone, neutral grip"></div>'
     +'<button class="saveBtn" onclick="saveNewMachine()">ADD</button>'
@@ -1288,6 +1298,7 @@ function renderProgress(){
     +(S.steps.length>=2?'<div class="lbl">Daily Steps</div><div class="chartTile"><canvas id="pg-steps" height="100"></canvas></div>':'')
     +'<div class="lbl">Strength Progress</div>'
     +'<div class="scrollRow" id="liftChips" style="margin-bottom:8px"></div>'
+    +'<div class="scrollRow" id="machineChipsRow" style="margin-bottom:8px;min-height:0"></div>'
     +'<div style="display:flex;gap:5px;margin-bottom:10px">'
     +'<button class="chip on" id="mt-max" onclick="setMetric(\'max\')">Max Weight</button>'
     +'<button class="chip" id="mt-best" onclick="setMetric(\'best\')">Best Set</button>'
@@ -1310,34 +1321,104 @@ function calcStreak(){if(!S.history.length)return 0;const dates=[...new Set(S.hi
 
 // ═══ LIFT CHART ═══
 function getTrackedLifts(){const seen=new Set(),out=[];S.history.forEach(h=>h.exercises?.forEach(e=>{if(!seen.has(e.id)){seen.add(e.id);out.push({id:e.id,name:e.name});}}));return out.slice(0,16);}
+
+// Get all distinct machines used for a given exercise id
+function getMachinesForLift(lid){
+  const seen=new Set();const out=[];
+  S.history.forEach(h=>{
+    const ex=h.exercises?.find(e=>e.id===lid);
+    if(ex&&ex.sets?.some(s=>s.weight||s.reps)){
+      const key=ex.machineId||'__none__';
+      if(!seen.has(key)){seen.add(key);out.push({machineId:ex.machineId||'',machineName:ex.machineName||'No machine logged'});}
+    }
+  });
+  return out;
+}
+
 function renderLiftChips(){
   const lifts=getTrackedLifts();const wrap=document.getElementById('liftChips');if(!wrap)return;
   if(!lifts.length){wrap.innerHTML='<span style="font-size:12px;color:var(--t3)">Log workouts to see lift progress.</span>';return;}
   if(!SEL_LIFT&&lifts.length)SEL_LIFT=lifts[0].id;
   wrap.innerHTML=lifts.map(l=>'<button class="chip '+(SEL_LIFT===l.id?'on':'')+'" onclick="selLift(\''+l.id+'\')">'+l.name.split(' ').slice(0,3).join(' ')+'</button>').join('');
-  if(SEL_LIFT)drawLiftChart(SEL_LIFT);
+  renderMachineChips();
 }
-function selLift(id){SEL_LIFT=id;renderLiftChips();}
+
+function renderMachineChips(){
+  const row=document.getElementById('machineChipsRow');if(!row||!SEL_LIFT)return;
+  const machines=getMachinesForLift(SEL_LIFT);
+  if(machines.length<=1){
+    // Only one machine (or none) — no filter needed, just draw
+    row.innerHTML='';
+    drawLiftChart(SEL_LIFT);
+    return;
+  }
+  // Multiple machines — show filter chips
+  const allChip='<button class="chip '+(SEL_MACHINE===null?'on':'')+'" onclick="selMachine(null)">All machines</button>';
+  const mChips=machines.map(m=>{
+    const label=m.machineName==='No machine logged'?'Untagged':m.machineName;
+    const shortLabel=label.replace(/Hammer Strength|Life Fitness|Star Trac|Matrix|Hoist/g,'').trim()||label;
+    return'<button class="chip '+(SEL_MACHINE===m.machineId?'on':'')+'" onclick="selMachine(\''+m.machineId+'\')">'+shortLabel+'</button>';
+  }).join('');
+  row.innerHTML='<span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin-right:4px;white-space:nowrap;align-self:center">By machine:</span>'+allChip+mChips;
+  drawLiftChart(SEL_LIFT);
+}
+
+function selLift(id){
+  SEL_LIFT=id;
+  SEL_MACHINE=null; // reset machine filter when switching exercise
+  renderLiftChips();
+}
+function selMachine(machineId){
+  SEL_MACHINE=machineId;
+  // Update chip UI
+  document.querySelectorAll('#machineChipsRow .chip').forEach(b=>b.classList.remove('on'));
+  event.target.classList.add('on');
+  drawLiftChart(SEL_LIFT);
+}
 function setMetric(m){SEL_METRIC=m;['max','best','vol'].forEach(k=>{const el=document.getElementById('mt-'+k);if(el)el.classList.toggle('on',k===m);});if(SEL_LIFT)drawLiftChart(SEL_LIFT);}
+
 function drawLiftChart(lid){
   const canvas=document.getElementById('liftChart');if(!canvas)return;
-  const raw=[];
-  S.history.slice().reverse().forEach(h=>{const ex=h.exercises?.find(e=>e.id===lid);if(ex&&ex.sets?.some(s=>s.weight||s.reps))raw.push({date:h.date,sets:ex.sets,machineId:ex.machineId||'',machineName:ex.machineName||''});});
-  const metrics=calcExMetrics(raw);
+  let raw=[];
+  S.history.slice().reverse().forEach(h=>{
+    const ex=h.exercises?.find(e=>e.id===lid);
+    if(ex&&ex.sets?.some(s=>s.weight||s.reps)){
+      raw.push({date:h.date,sets:ex.sets,machineId:ex.machineId||'',machineName:ex.machineName||''});
+    }
+  });
+
+  // Apply machine filter
+  const filtered=SEL_MACHINE!==null?raw.filter(r=>r.machineId===SEL_MACHINE):raw;
+  const metrics=calcExMetrics(filtered);
+
   const yFn={max:m=>m.maxW,best:m=>m.bestSetVol,vol:m=>m.totalVol}[SEL_METRIC];
   const labels={max:'Max weight (lbs)',best:'Best set (lbs × reps)',vol:'Total volume'}[SEL_METRIC];
   const vals=metrics.map(yFn);const dates=metrics.map(m=>m.date);
-  const meta=document.getElementById('liftChartMeta');if(meta)meta.textContent=labels+(metrics.length?' · '+metrics.length+' sessions':'');
+
+  // Machine context label
+  let machineContext='';
+  if(SEL_MACHINE!==null){
+    const m=raw.find(r=>r.machineId===SEL_MACHINE);
+    machineContext=m?' · '+m.machineName:'';
+  } else if(getMachinesForLift(lid).length>1){
+    machineContext=' · all machines combined';
+  }
+
+  const meta=document.getElementById('liftChartMeta');
+  if(meta)meta.textContent=labels+(metrics.length?' · '+metrics.length+' sessions':'')+machineContext;
+
   const summary=document.getElementById('liftSummary');
   if(summary&&metrics.length){
     const latest=metrics[metrics.length-1];const prev=metrics.length>=2?metrics[metrics.length-2]:null;
     const allTime=metrics.reduce((b,m)=>yFn(m)>yFn(b)?m:b,metrics[0]);
     const diffStr=prev?(()=>{const d=yFn(latest)-yFn(prev);const col=d>0?'var(--green)':d<0?'var(--red)':'var(--t3)';return'<span style="color:'+col+';font-weight:700">'+(d>0?'↑':'↓')+' '+Math.abs(Math.round(d))+' vs last session</span>';})():'';
-    const mStr=latest.machineName?'<div style="font-size:11px;color:var(--teal);margin-top:3px">Last on: '+latest.machineName+'</div>':'';
+    const mStr=latest.machineName?'<div style="font-size:11px;color:var(--teal);margin-top:3px">Machine: '+latest.machineName+'</div>':'';
     const detail={max:'<span style="font-family:var(--fm);font-size:22px;font-weight:600;color:var(--green)">'+latest.maxW+'lbs</span> max · all-time: <span style="color:var(--amber);font-weight:600">'+allTime.maxW+'lbs</span>',best:'<span style="font-family:var(--fm);font-size:22px;font-weight:600;color:var(--green)">'+latest.bestSet.w+'×'+latest.bestSet.r+'</span> best set · vol: '+latest.bestSetVol,vol:'<span style="font-family:var(--fm);font-size:22px;font-weight:600;color:var(--green)">'+latest.totalVol+'</span> total vol'}[SEL_METRIC];
     const setsStr=latest.sets.filter(s=>s.w||s.r).map(s=>s.w+'×'+s.r+' <span style="color:var(--t3);font-size:10px">('+s.w*s.r+')</span>').join('  ');
     summary.innerHTML='<div style="border-top:1px solid var(--bdr);padding-top:10px"><div>'+detail+'</div><div style="font-size:11px;color:var(--t2);margin-top:6px;font-family:var(--fm)">'+setsStr+'</div><div style="font-size:11px;margin-top:4px">'+diffStr+'</div>'+mStr+'</div>';
-  }else if(summary){summary.innerHTML='';}
+  }else if(summary){
+    summary.innerHTML=metrics.length===0&&filtered.length===0&&raw.length>0?'<div style="padding:10px 0;font-size:13px;color:var(--t3)">No sessions with this machine yet. Select a different machine or "All machines".</div>':'';
+  }
   drawLineCalendar(canvas,vals,dates,'var(--green)',170);
 }
 
